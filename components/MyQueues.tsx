@@ -3,8 +3,17 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
+type Queue = {
+  id: number;
+  current_count: number;
+  status: string;
+  firing_code: string | null;
+  label: string | null;
+  stores: { name: string };
+};
+
 export default function MyQueues() {
-  const [queues, setQueues] = useState<any[]>([]);
+  const [queues, setQueues] = useState<Queue[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadQueues = async () => {
@@ -19,7 +28,7 @@ export default function MyQueues() {
     if (error) {
       console.error(error);
     } else {
-      setQueues(data || []);
+      setQueues((data || []) as unknown as Queue[]);
     }
     setLoading(false);
   };
@@ -81,7 +90,7 @@ export default function MyQueues() {
 
             {q.status === 'firing' && q.firing_code && (
               <div 
-                onClick={() => copyCode(q.firing_code)}
+                onClick={() => copyCode(q.firing_code ?? '')}
                 className="p-4 bg-black rounded-xl text-2xl font-mono text-center mb-4 border border-yellow-400 cursor-pointer hover:bg-zinc-800 transition"
               >
                 Companion Code: {q.firing_code}

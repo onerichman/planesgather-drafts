@@ -1,7 +1,6 @@
 // components/PhoneOptInModal.tsx
 'use client';
 import { useState } from 'react';
-import { supabase } from '@/lib/supabase';
 
 interface Props {
   onOptIn: () => void;
@@ -34,7 +33,7 @@ export default function PhoneOptInModal({ onOptIn, onCancel }: Props) {
     <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4">
       <div className="bg-zinc-900 rounded-3xl p-8 max-w-sm w-full">
         <h2 className="text-2xl font-bold mb-4">Enter Phone Number</h2>
-        <p className="mb-6 text-zinc-400">We'll text you when your draft is ready to start.</p>
+        <p className="mb-6 text-zinc-400">We&apos;ll text you when your draft is ready to start.</p>
 
         <input
           type="tel"

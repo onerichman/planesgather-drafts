@@ -1,17 +1,26 @@
 // components/OtherActiveQueues.tsx
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface Props {
   onJoin: (queueId: number) => void;
 }
 
-export default function OtherActiveQueues({ onJoin }: Props) {
-  const [queues, setQueues] = useState<any[]>([]);
+type ActiveQueue = {
+  id: number;
+  current_count: number;
+  status: string;
+  label: string | null;
+  queue_number: number;
+  stores: { name: string };
+};
+
+export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-runtime").JSX.Element {
+  const [queues, setQueues] = useState<ActiveQueue[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadQueues = async () => {
+  const loadQueues = useCallback(async (): Promise<void> => {
     const { data } = await supabase
       .from('draft_queues')
       .select(`
@@ -25,9 +34,9 @@ export default function OtherActiveQueues({ onJoin }: Props) {
       .in('status', ['open', 'firing'])
       .order('created_at', { ascending: false });
 
-    setQueues(data || []);
+    setQueues((data || []) as unknown as ActiveQueue[]);
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     loadQueues();
@@ -41,20 +50,26 @@ export default function OtherActiveQueues({ onJoin }: Props) {
       .subscribe();
 
     if (typeof window !== 'undefined') {
-      (window as any).refreshOtherQueues = loadQueues;
+      window.refreshOtherQueues = loadQueues;
     }
 
-    return () => supabase.removeChannel(channel);
-  }, []);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadQueues]);
 
   // Read joined queues
   let joinedQueueIds: number[] = [];
   if (typeof window !== 'undefined') {
     try {
       joinedQueueIds = JSON.parse(localStorage.getItem('joinedQueueIds') || '[]');
-    } catch (e) {
+    } catch {
       joinedQueueIds = [];
     }
+  }
+
+  if (loading) {
+    return <div className="px-8 mt-12 text-zinc-400">Loading active queues...</div>;
   }
 
   // Strong filter: hide if already joined OR has players

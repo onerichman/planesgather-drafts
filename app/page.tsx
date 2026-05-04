@@ -1,7 +1,5 @@
 // app/page.tsx
 'use client';
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import QuickDraftFinder from '@/components/QuickDraftFinder';
 import MyActiveQueues from '@/components/MyActiveQueues';
 import OtherActiveQueues from '@/components/OtherActiveQueues';
@@ -21,7 +19,6 @@ export default function Home() {
         <p className="text-xl text-zinc-400">Beta — Find a draft with your group</p>
       </div>
 
-      {/* Store Dashboard Button */}
       <div className="px-8 mt-6">
         <button
           onClick={() => {

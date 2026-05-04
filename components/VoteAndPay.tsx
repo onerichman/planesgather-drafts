@@ -1,6 +1,6 @@
 // components/VoteAndPay.tsx
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface Props {
@@ -8,18 +8,24 @@ interface Props {
   onVoted: () => void;
 }
 
+type DraftProduct = {
+  id: number;
+  name: string;
+  price: number;
+  is_special: boolean | null;
+};
+
+type QueueWithStore = {
+  stores?: { id: number };
+};
+
 export default function VoteAndPay({ queueId, onVoted }: Props) {
-  const [products, setProducts] = useState<any[]>([]);
+  const [products, setProducts] = useState<DraftProduct[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [queue, setQueue] = useState<any>(null);
 
-  useEffect(() => {
-    loadQueueAndProducts();
-  }, [queueId]);
-
-  const loadQueueAndProducts = async () => {
+  const loadQueueAndProducts = useCallback(async () => {
     // Load queue info
     const { data: q } = await supabase
       .from('draft_queues')
@@ -27,14 +33,14 @@ export default function VoteAndPay({ queueId, onVoted }: Props) {
       .eq('id', queueId)
       .single();
 
-    setQueue(q);
+    const queue = q as QueueWithStore | null;
 
-    if (q?.stores?.id) {
+    if (queue?.stores?.id) {
       const { data: p } = await supabase
         .from('draft_products')
         .select('*')
-        .eq('store_id', q.stores.id);
-      setProducts(p || []);
+        .eq('store_id', queue.stores.id);
+      setProducts((p || []) as DraftProduct[]);
     }
 
     // Check if user already voted
@@ -48,7 +54,11 @@ export default function VoteAndPay({ queueId, onVoted }: Props) {
         .single();
       setHasVoted(!!data);
     }
-  };
+  }, [queueId]);
+
+  useEffect(() => {
+    loadQueueAndProducts();
+  }, [loadQueueAndProducts]);
 
   const castVote = async (productId: number) => {
     setLoading(true);

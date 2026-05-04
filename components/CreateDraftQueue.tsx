@@ -74,8 +74,9 @@ export default function CreateDraftQueue({ storeId, onCreated }: Props) {
       setShowModal(false);
       resetModal();
       onCreated();
-    } catch (err: any) {
-      alert('Error: ' + err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      alert('Error: ' + message);
     } finally {
       setLoading(false);
     }

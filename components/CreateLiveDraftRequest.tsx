@@ -1,6 +1,6 @@
 // components/CreateLiveDraftRequest.tsx
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getDistance } from '@/utils/distance';
 
@@ -15,15 +15,63 @@ const draftTypes = [
   "Other"
 ];
 
+type Store = {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+};
+
+type DraftRequest = {
+  id: number;
+  status: string;
+  notes: string | null;
+};
+
+const pendingRequestStorageKey = 'pendingDraftRequestIds';
+
+const readNumberList = (key: string) => {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeNumberList = (key: string, ids: number[]) => {
+  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
+};
+
+const extractApprovedQueueId = (notes: string | null) => {
+  const match = notes?.match(/approved_queue_id:(\d+)/);
+  return match ? Number(match[1]) : null;
+};
+
+const extractDeniedReason = (notes: string | null) => {
+  const match = notes?.match(/denied_reason:([^\n]+)/);
+  return match ? match[1] : null;
+};
+
 export default function CreateLiveDraftRequest() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [stores, setStores] = useState<any[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [selectedType, setSelectedType] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+
+  const loadNearbyStores = useCallback(async (lat: number, lng: number) => {
+    const { data } = await supabase.from('stores').select('*');
+    const sorted = ((data || []) as Store[]).sort((a, b) => {
+      const distA = getDistance(lat, lng, a.lat, a.lng);
+      const distB = getDistance(lat, lng, b.lat, b.lng);
+      return distA - distB;
+    }).slice(0, 10);
+    setStores(sorted);
+  }, []);
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
@@ -33,17 +81,7 @@ export default function CreateLiveDraftRequest() {
       },
       () => console.log("Location access denied")
     );
-  }, []);
-
-  const loadNearbyStores = async (lat: number, lng: number) => {
-    const { data } = await supabase.from('stores').select('*');
-    const sorted = (data || []).sort((a: any, b: any) => {
-      const distA = getDistance(lat, lng, a.lat, a.lng);
-      const distB = getDistance(lat, lng, b.lat, b.lng);
-      return distA - distB;
-    }).slice(0, 10);
-    setStores(sorted);
-  };
+  }, [loadNearbyStores]);
 
   const createRequest = async () => {
     if (!selectedStoreId || !selectedType) {
@@ -53,18 +91,25 @@ export default function CreateLiveDraftRequest() {
 
     setLoading(true);
 
-    const { error } = await supabase.from('draft_requests').insert({
+    const { data, error } = await supabase.from('draft_requests').insert({
       store_id: selectedStoreId,
       label: selectedType,
       notes: notes.trim() || null,
       status: 'pending'
-    });
+    }).select('id').single();
 
     setLoading(false);
 
     if (error) {
-      alert("Error sending request: " + error.message);
+      alert("Error: " + error.message);
     } else {
+      if (data?.id) {
+        writeNumberList(pendingRequestStorageKey, [
+          ...readNumberList(pendingRequestStorageKey),
+          data.id,
+        ]);
+      }
+
       alert("✅ Request sent to the store! Waiting for approval...");
       setShowModal(false);
       setSelectedStoreId(null);
@@ -73,58 +118,92 @@ export default function CreateLiveDraftRequest() {
     }
   };
 
-  // Realtime listener for approvals
-  useEffect(() => {
-    const channel = supabase
-      .channel('request-approvals-v2')
-      .on('postgres_changes', 
-        { event: 'UPDATE', schema: 'public', table: 'draft_requests' },
-        (payload) => {
-          if (payload.new?.status === 'approved') {
-            setSuccessMessage("✅ Your draft request was approved! You have been auto-added to the queue.");
-            setTimeout(() => setSuccessMessage(''), 8000);
+  const addJoinedQueue = useCallback((queueId: number) => {
+    const joined = readNumberList('joinedQueueIds');
+    if (!joined.includes(queueId)) {
+      writeNumberList('joinedQueueIds', [...joined, queueId]);
+      console.log("âœ… Auto-added approved queue to localStorage:", queueId);
+    }
 
-            // Force refresh
-            if (typeof window !== 'undefined') {
-              if ((window as any).refreshMyQueues) (window as any).refreshMyQueues();
-              if ((window as any).refreshOtherQueues) (window as any).refreshOtherQueues();
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
+    setSuccessMessage("âœ… Your draft request was approved! You have been auto-added to the queue.");
+    setTimeout(() => setSuccessMessage(''), 8000);
+    window.refreshMyQueues?.();
+    window.refreshOtherQueues?.();
   }, []);
 
-  // Manual Refresh Button
-  const manualRefresh = () => {
-    if (typeof window !== 'undefined') {
-      if ((window as any).refreshMyQueues) (window as any).refreshMyQueues();
-      if ((window as any).refreshOtherQueues) (window as any).refreshOtherQueues();
+  const checkApprovedRequests = useCallback(async () => {
+    const pendingIds = readNumberList(pendingRequestStorageKey);
+    if (pendingIds.length === 0) return;
+
+    const { data } = await supabase
+      .from('draft_requests')
+      .select('id, status, notes')
+      .in('id', pendingIds);
+
+    const requests = (data || []) as DraftRequest[];
+    const stillPending: number[] = [];
+
+    for (const request of requests) {
+      const queueId = request.status === 'approved' ? extractApprovedQueueId(request.notes) : null;
+      if (queueId) {
+        addJoinedQueue(queueId);
+      } else if (request.status === 'denied') {
+        const reason = extractDeniedReason(request.notes);
+        setSuccessMessage(`Your draft request was denied${reason ? `: ${reason}` : ''}.`);
+        setTimeout(() => setSuccessMessage(''), 10000);
+      } else if (request.status === 'pending') {
+        stillPending.push(request.id);
+      }
     }
-    setSuccessMessage("🔄 Refreshed queues. Check Your Active Queues.");
-    setTimeout(() => setSuccessMessage(''), 4000);
-  };
+
+    writeNumberList(pendingRequestStorageKey, stillPending);
+  }, [addJoinedQueue]);
+
+  // Listen for store approval and add to localStorage
+  useEffect(() => {
+    const handleQueueApproved = (e: Event) => {
+      const queueId = (e as CustomEvent<number>).detail;
+      if (!queueId) return;
+      addJoinedQueue(queueId);
+
+      const joined = JSON.parse(localStorage.getItem('joinedQueueIds') || '[]');
+      if (!joined.includes(queueId)) {
+        const newJoined = [...joined, queueId];
+        localStorage.setItem('joinedQueueIds', JSON.stringify(newJoined));
+        console.log("✅ Auto-added approved queue to localStorage:", queueId);
+      }
+
+      setSuccessMessage("✅ Your draft request was approved! You have been auto-added to the queue.");
+      setTimeout(() => setSuccessMessage(''), 8000);
+
+      if (typeof window !== 'undefined') {
+        window.refreshMyQueues?.();
+        window.refreshOtherQueues?.();
+      }
+    };
+
+    window.addEventListener('queueApproved', handleQueueApproved);
+
+    return () => window.removeEventListener('queueApproved', handleQueueApproved);
+  }, [addJoinedQueue]);
+
+  useEffect(() => {
+    checkApprovedRequests();
+    const interval = setInterval(checkApprovedRequests, 3000);
+    return () => clearInterval(interval);
+  }, [checkApprovedRequests]);
 
   return (
     <>
-      <div className="px-8 mt-8 flex gap-3">
+      <div className="px-8 mt-8">
         <button
           onClick={() => setShowModal(true)}
-          className="flex-1 bg-purple-600 hover:bg-purple-700 py-5 rounded-2xl text-lg font-bold"
+          className="w-full bg-purple-600 hover:bg-purple-700 py-5 rounded-2xl text-lg font-bold"
         >
           ✨ Create Live Draft Request
         </button>
-        <button
-          onClick={manualRefresh}
-          className="px-6 bg-zinc-700 hover:bg-zinc-600 rounded-2xl text-sm font-medium"
-        >
-          🔄 Refresh
-        </button>
       </div>
 
-      {/* Success / Status Message */}
       {successMessage && (
         <div className="mx-8 mt-6 p-5 bg-green-900 border border-green-500 text-green-100 rounded-2xl text-center font-medium">
           {successMessage}
@@ -138,7 +217,7 @@ export default function CreateLiveDraftRequest() {
 
             <p className="text-zinc-400 mb-3">Which store are you at?</p>
             <div className="space-y-2 mb-8 max-h-64 overflow-y-auto pr-2">
-              {stores.map((store: any) => (
+              {stores.map((store) => (
                 <button
                   key={store.id}
                   onClick={() => setSelectedStoreId(store.id)}

@@ -5,9 +5,35 @@ import { supabase } from '@/lib/supabase';
 import { getDistance } from '@/utils/distance';
 import PhoneOptInModal from './PhoneOptInModal';
 
+type NearbyQueue = {
+  id: number;
+  current_count: number;
+  queue_number: number;
+  label: string | null;
+  stores: {
+    name: string;
+    slug: string;
+    lat: number;
+    lng: number;
+  };
+};
+
+const readNumberList = (key: string) => {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeNumberList = (key: string, ids: number[]) => {
+  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
+};
+
 export default function QuickDraftFinder() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [queues, setQueues] = useState<any[]>([]);
+  const [queues, setQueues] = useState<NearbyQueue[]>([]);
   const [joinedQueueIds, setJoinedQueueIds] = useState<number[]>([]);
   const [showOptIn, setShowOptIn] = useState(false);
   const [selectedQueueId, setSelectedQueueId] = useState<number | null>(null);
@@ -15,19 +41,20 @@ export default function QuickDraftFinder() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // Load joined queues from localStorage when component mounts
+  // Load joined queues from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('joinedQueueIds');
-    if (saved) {
-      setJoinedQueueIds(JSON.parse(saved));
-    }
+    const syncJoinedQueues = () => setJoinedQueueIds(readNumberList('joinedQueueIds'));
+    syncJoinedQueues();
+    window.addEventListener('joinedQueuesChanged', syncJoinedQueues);
+    return () => window.removeEventListener('joinedQueuesChanged', syncJoinedQueues);
   }, []);
 
-  // Save joined queues whenever it changes
+  // Save to localStorage whenever joinedQueueIds changes
   useEffect(() => {
     localStorage.setItem('joinedQueueIds', JSON.stringify(joinedQueueIds));
   }, [joinedQueueIds]);
 
+  // Get user location
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
       (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -35,20 +62,38 @@ export default function QuickDraftFinder() {
     );
   }, []);
 
-  // Listen for join from OtherActiveQueues
+  // Listen for "Join Now" button clicks from OtherActiveQueues
   useEffect(() => {
-    const handleJoinEvent = (e: any) => {
-      attemptJoin(e.detail);
+    const handleJoinEvent = (e: Event) => {
+      const queueId = (e as CustomEvent<number>).detail;
+      if (joinedQueueIds.includes(queueId)) {
+        alert("You are already in this queue!");
+        return;
+      }
+      setSelectedQueueId(queueId);
+      setShowOptIn(true);
     };
     window.addEventListener('joinQueue', handleJoinEvent);
     return () => window.removeEventListener('joinQueue', handleJoinEvent);
   }, [joinedQueueIds]);
 
+  // Listen for player requests approved by store
+  useEffect(() => {
+    const handleQueueApproved = (e: Event) => {
+      const queueId = (e as CustomEvent<number>).detail;
+      if (queueId && !joinedQueueIds.includes(queueId)) {
+        const newList = [...joinedQueueIds, queueId];
+        setJoinedQueueIds(newList);
+        localStorage.setItem('joinedQueueIds', JSON.stringify(newList));
+        console.log("✅ Auto-added approved queue:", queueId);
+      }
+    };
+    window.addEventListener('queueApproved', handleQueueApproved);
+    return () => window.removeEventListener('queueApproved', handleQueueApproved);
+  }, [joinedQueueIds]);
+
   const findNearbyDrafts = async () => {
-    if (!location) {
-      setMessage("Location access is required");
-      return;
-    }
+    if (!location) return;
 
     setLoading(true);
     setMessage("Searching...");
@@ -63,7 +108,7 @@ export default function QuickDraftFinder() {
 
     setLoading(false);
 
-    const filtered = (data || []).filter((q: any) => {
+    const filtered = ((data || []) as unknown as NearbyQueue[]).filter((q) => {
       if (!q.stores?.lat || !q.stores?.lng) return false;
       const dist = getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng);
       return dist <= 100;
@@ -73,18 +118,17 @@ export default function QuickDraftFinder() {
     setMessage(filtered.length === 0 ? "No drafts within 100 miles" : "");
   };
 
-  const attemptJoin = (queueId: number) => {
+  function attemptJoin(queueId: number) {
     if (joinedQueueIds.includes(queueId)) {
       alert("You are already in this queue!");
       return;
     }
     setSelectedQueueId(queueId);
     setShowOptIn(true);
-  };
+  }
 
   const handleOptInSuccess = async () => {
     if (!selectedQueueId) return;
-
 
     const { data: q } = await supabase
       .from('draft_queues')
@@ -99,14 +143,21 @@ export default function QuickDraftFinder() {
       .update({ current_count: newCount })
       .eq('id', selectedQueueId);
 
-    // Add to joined list
-    setJoinedQueueIds(prev => [...prev, selectedQueueId]);
+    // Immediate save to localStorage
+    const newJoinedList = [...joinedQueueIds, selectedQueueId];
+    setJoinedQueueIds(newJoinedList);
+    writeNumberList('joinedQueueIds', newJoinedList);
+    writeNumberList('withdrawnQueueIds', readNumberList('withdrawnQueueIds').filter((id) => id !== selectedQueueId));
+    window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
+
+    console.log("✅ Saved joined queues:", newJoinedList);
 
     await findNearbyDrafts();
 
+    // Refresh other components
     if (typeof window !== 'undefined') {
-      if ((window as any).refreshMyQueues) (window as any).refreshMyQueues();
-      if ((window as any).refreshOtherQueues) (window as any).refreshOtherQueues();
+      window.refreshMyQueues?.();
+      window.refreshOtherQueues?.();
     }
 
     setShowOptIn(false);
@@ -128,7 +179,7 @@ export default function QuickDraftFinder() {
       <div className="px-8 mt-8">
         <button 
           onClick={findNearbyDrafts} 
-          disabled={loading}
+          disabled={loading} 
           className="w-full bg-red-600 hover:bg-red-700 py-6 rounded-2xl text-2xl font-bold"
         >
           {loading ? 'Searching...' : '⚡ Find Drafts Near Me'}
@@ -162,9 +213,7 @@ export default function QuickDraftFinder() {
                     onClick={() => attemptJoin(q.id)}
                     disabled={alreadyJoined}
                     className={`w-full py-5 rounded-xl font-bold text-lg transition ${
-                      alreadyJoined 
-                        ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' 
-                        : 'bg-green-600 hover:bg-green-700'
+                      alreadyJoined ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
                     }`}
                   >
                     {alreadyJoined ? '✅ Already Joined' : 'Join Queue'}
@@ -182,7 +231,7 @@ export default function QuickDraftFinder() {
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-3xl p-10 max-w-md w-full text-center">
             <div className="text-6xl mb-6">✅</div>
-            <h2 className="text-3xl font-bold mb-4">You're In!</h2>
+            <h2 className="text-3xl font-bold mb-4">You&apos;re In!</h2>
             <button onClick={closeSuccess} className="w-full bg-green-600 py-5 rounded-2xl font-bold text-lg">
               Return to Main Screen
             </button>
