@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, use } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getDistance } from '@/utils/distance';
 import CreateDraftQueue from '@/components/CreateDraftQueue';
+import QrScanner from 'qr-scanner';
 
 const priceOptions = [20, 25, 30, 35, 40, "TBD"];
 
@@ -18,6 +19,15 @@ type Store = {
 };
 
 type DraftQueue = {
+  id: number;
+  current_count: number;
+  status: string;
+  firing_code: string | null;
+  queue_number: number;
+  label: string | null;
+};
+
+type CommanderQueue = {
   id: number;
   current_count: number;
   status: string;
@@ -47,9 +57,11 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const slug = resolvedParams.slug;
 
   const [store, setStore] = useState<Store | null>(null);
-  const [queues, setQueues] = useState<DraftQueue[]>([]);
+  const [draftQueues, setDraftQueues] = useState<DraftQueue[]>([]);
+  const [commanderQueues, setCommanderQueues] = useState<CommanderQueue[]>([]);
   const [pendingRequests, setPendingRequests] = useState<DraftRequest[]>([]);
   const [requestNotice, setRequestNotice] = useState('');
+  const [storeError, setStoreError] = useState('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -62,6 +74,12 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [denyingRequest, setDenyingRequest] = useState<DraftRequest | null>(null);
   const [selectedType, setSelectedType] = useState('');
   const [selectedPrice, setSelectedPrice] = useState<string | number>('');
+  const [qrModal, setQrModal] = useState<{ code: string; link: string } | null>(null);
+  const [qrScannerModal, setQrScannerModal] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scannedEventLinks, setScannedEventLinks] = useState<Array<{ url: string; name: string; id: string }>>([]);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const qrScannerRef = useRef<QrScanner | null>(null);
   const pendingRequestIdsRef = useRef<Set<number>>(new Set());
 
   const checkPassword = () => {
@@ -75,11 +93,27 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   };
 
   const loadStoreData = async () => {
-    const { data: storeData } = await supabase
+    setStoreError('');
+
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      setStore(null);
+      setStoreError('Supabase is not configured for this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.');
+      setLoading(false);
+      return;
+    }
+
+    const { data: storeData, error } = await supabase
       .from('stores')
       .select('*')
       .eq('slug', slug)
-      .single();
+      .maybeSingle();
+
+    if (error) {
+      setStore(null);
+      setStoreError(`Could not load store: ${error.message}`);
+      setLoading(false);
+      return;
+    }
 
     setStore(storeData);
     if (storeData) {
@@ -103,7 +137,13 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       .select('*')
       .eq('store_id', storeId)
       .order('queue_number');
-    setQueues(data || []);
+    
+    const allQueues = data || [];
+    const drafts = allQueues.filter((q: DraftQueue) => !q.label || !q.label.toLowerCase().includes('commander'));
+    const commanders = allQueues.filter((q: CommanderQueue) => q.label && q.label.toLowerCase().includes('commander'));
+    
+    setDraftQueues(drafts as DraftQueue[]);
+    setCommanderQueues(commanders as CommanderQueue[]);
   };
 
   const loadPendingRequests = async (storeId: number, options: { notifyNew?: boolean } = {}) => {
@@ -150,14 +190,14 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   };
 
   useEffect(() => {
-    if (!isAuthenticated || !store) return;
-
-    const interval = setInterval(() => {
-      loadPendingRequests(store.id, { notifyNew: true });
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [isAuthenticated, store]);
+    return () => {
+      // Cleanup QR scanner on unmount
+      if (qrScannerRef.current) {
+        qrScannerRef.current.stop();
+        qrScannerRef.current.destroy();
+      }
+    };
+  }, []);
 
   const busyPercent = store 
     ? Math.round(((store.current_players || 0) / (store.max_capacity || 40)) * 100) 
@@ -246,11 +286,15 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     loadPendingRequests(store.id);
   };
 
-  const markFiring = async (queueId: number) => {
+  const getJoinLink = (code: string) => {
+    if (typeof window === 'undefined') return `/join?code=${encodeURIComponent(code)}`;
+    return `${window.location.origin}/join?code=${encodeURIComponent(code)}`;
+  };
+
+  const markFiring = async (queueId: number, useLink = false) => {
     if (!store) return;
     const label = prompt("Enter label/time (e.g. Table 1 at 3pm):", "");
-    const code = prompt("Enter the 6-digit companion code:", 
-      generateCompanionCode());
+    const code = prompt("Enter the 6-digit companion code:", generateCompanionCode());
 
     if (!code || code.length !== 6) {
       alert("Please enter a valid 6-digit code");
@@ -259,14 +303,21 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
     await supabase
       .from('draft_queues')
-      .update({ 
+      .update({
         status: 'firing',
         firing_code: code,
-        label: label?.trim() || null 
+        label: label?.trim() || null,
       })
       .eq('id', queueId);
 
     loadQueues(store.id);
+
+    if (useLink) {
+      setQrModal({ code, link: getJoinLink(code) });
+    } else {
+      // Show QR scanner modal for scanning event links
+      startQrScan();
+    }
   };
 
   const markCanceled = async (queueId: number) => {
@@ -288,6 +339,85 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     if (!confirm("WARNING: Permanently delete ALL queues?")) return;
     await supabase.from('draft_queues').delete().eq('store_id', store.id);
     loadQueues(store.id);
+  };
+
+  const startQrScan = async () => {
+    if (!videoRef.current) return;
+
+    setQrScannerModal(true);
+    setScanning(true);
+
+    try {
+      qrScannerRef.current = new QrScanner(
+        videoRef.current,
+        async (result) => {
+          console.log('QR code scanned:', result.data);
+          await handleQrScan(result.data);
+        },
+        {
+          highlightScanRegion: true,
+          highlightCodeOutline: true,
+        }
+      );
+
+      await qrScannerRef.current.start();
+    } catch (error) {
+      console.error('Failed to start QR scanner:', error);
+      alert('Failed to access camera. Please ensure camera permissions are granted.');
+      setQrScannerModal(false);
+      setScanning(false);
+    }
+  };
+
+  const stopQrScan = () => {
+    if (qrScannerRef.current) {
+      qrScannerRef.current.stop();
+      qrScannerRef.current.destroy();
+      qrScannerRef.current = null;
+    }
+    setQrScannerModal(false);
+    setScanning(false);
+  };
+
+  const handleQrScan = async (scannedData: string) => {
+    try {
+      console.log('QR code scanned:', scannedData);
+
+      let eventUrl = '';
+      let eventName = 'Scanned Event';
+
+      // Try to parse as URL
+      try {
+        const url = new URL(scannedData);
+        eventUrl = scannedData;
+        eventName = url.searchParams.get('name') || url.searchParams.get('title') || url.hostname || 'Scanned Event';
+      } catch {
+        // If not a valid URL, check if it's a relative path or just text
+        if (scannedData.startsWith('http://') || scannedData.startsWith('https://')) {
+          eventUrl = scannedData;
+        } else {
+          alert('Invalid QR code. Expected a valid HTTP/HTTPS URL.');
+          return;
+        }
+      }
+
+      // Add to scanned event links
+      const newLink = {
+        url: eventUrl,
+        name: eventName,
+        id: eventUrl // Use URL as unique ID
+      };
+
+      setScannedEventLinks(prev => [newLink, ...prev]);
+
+      alert(`✅ Event link scanned!\n\n${eventName}\n${eventUrl}\n\nPlayers can now click the button to join.`);
+
+      stopQrScan();
+
+    } catch (error) {
+      console.error('Error processing QR scan:', error);
+      alert('Error processing QR code. Please try again.');
+    }
   };
 
   // ==================== PASSWORD SCREEN ====================
@@ -326,7 +456,23 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   }
 
   if (loading) return <div className="p-8 text-center text-xl">Loading store...</div>;
-  if (!store) return <div className="p-8 text-center text-xl">Store not found</div>;
+  if (!store) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
+        <div className="bg-zinc-900 p-8 rounded-3xl max-w-lg w-full text-center">
+          <h1 className="text-3xl font-bold mb-4">Store Not Found</h1>
+          <p className="text-zinc-400 mb-4">No store matched slug: <span className="font-mono text-white">{slug}</span></p>
+          {storeError && <p className="text-red-300 text-sm">{storeError}</p>}
+          <button
+            onClick={() => window.location.href = '/'}
+            className="mt-6 bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-xl font-medium"
+          >
+            Back to Player App
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-6">
@@ -353,6 +499,13 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
       <button onClick={clearAllQueues} className="bg-red-600 px-6 py-3 rounded-xl mb-6 font-bold">
         Clear All Queues
+      </button>
+
+      <button
+        onClick={startQrScan}
+        className="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-xl mb-6 font-bold ml-4"
+      >
+        📱 Scan Event QR Code
       </button>
 
       {requestNotice && (
@@ -461,11 +614,35 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         </div>
       )}
 
+      {scannedEventLinks.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold mb-6">Scanned Event Links</h2>
+          <div className="space-y-4">
+            {scannedEventLinks.map((link) => (
+              <div key={link.id} className="bg-zinc-800 p-6 rounded-3xl">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xl font-bold text-emerald-400">{link.name}</h3>
+                    <p className="text-zinc-400 text-sm mt-1">{link.url}</p>
+                  </div>
+                  <button
+                    onClick={() => window.open(link.url, '_blank')}
+                    className="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-xl font-bold"
+                  >
+                    Join Event
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <h2 className="text-3xl font-bold mb-6">Live Draft Queues</h2>
-      {queues.length === 0 ? (
-        <p className="text-zinc-400 mb-6">No queues yet</p>
+      {draftQueues.length === 0 ? (
+        <p className="text-zinc-400 mb-6">No draft queues yet</p>
       ) : (
-        queues.map((q) => (
+        draftQueues.map((q) => (
           <div key={q.id} className="bg-zinc-800 p-6 rounded-3xl mb-8">
             <div className="flex justify-between items-start mb-4">
               <div>
@@ -476,11 +653,16 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                 {q.label && <p className="text-yellow-400 mt-1">{q.label}</p>}
               </div>
 
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex flex-col gap-2">
                 {q.status === 'open' && (
-                  <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
-                    Mark as Firing
-                  </button>
+                  <>
+                    <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
+                      Mark as Firing & Scan Event
+                    </button>
+                    <button onClick={() => markFiring(q.id, true)} className="bg-emerald-600 px-6 py-3 rounded-xl text-sm font-bold">
+                      Mark as Firing with QR Link
+                    </button>
+                  </>
                 )}
                 <button onClick={() => markCanceled(q.id)} className="bg-red-600 px-6 py-3 rounded-xl text-sm font-bold">
                   Cancel
@@ -498,6 +680,130 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             )}
           </div>
         ))
+      )}
+
+      <h2 className="text-3xl font-bold mb-6 mt-10">Commander Pods</h2>
+      {commanderQueues.length === 0 ? (
+        <p className="text-zinc-400 mb-6">No commander pods yet</p>
+      ) : (
+        commanderQueues.map((q) => (
+          <div key={q.id} className="bg-zinc-800 p-6 rounded-3xl mb-8 border border-emerald-500/30">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <div className="text-4xl font-bold text-emerald-400">{q.current_count}/4</div>
+                <p className="text-sm opacity-70">
+                  Queue #{q.queue_number} • <span className="capitalize">{q.status}</span>
+                </p>
+                {q.label && <p className="text-yellow-400 mt-1">{q.label}</p>}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {q.status === 'open' && (
+                  <>
+                    <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
+                      Mark as Firing & Scan Event
+                    </button>
+                    <button onClick={() => markFiring(q.id, true)} className="bg-emerald-600 px-6 py-3 rounded-xl text-sm font-bold">
+                      Mark as Firing with QR Link
+                    </button>
+                  </>
+                )}
+                <button onClick={() => markCanceled(q.id)} className="bg-red-600 px-6 py-3 rounded-xl text-sm font-bold">
+                  Cancel
+                </button>
+                <button onClick={() => markCompleted(q.id)} className="bg-green-600 px-6 py-3 rounded-xl text-sm font-bold">
+                  Completed
+                </button>
+              </div>
+            </div>
+
+            {q.firing_code && (
+              <div className="p-4 bg-black rounded-xl text-2xl font-mono text-center">
+                Companion Code: {q.firing_code}
+              </div>
+            )}
+          </div>
+        ))
+      )}
+
+      {qrModal && (
+        <div className="fixed inset-0 bg-black/90 z-[80] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-3xl p-8 max-w-lg w-full text-center">
+            <h2 className="text-3xl font-bold mb-4">QR Join Link Generated</h2>
+            <p className="text-zinc-400 mb-6">Scan this QR code or copy the link to open the companion join flow.</p>
+
+            <div className="mx-auto mb-6 w-52 h-52 bg-white p-4 rounded-3xl">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(qrModal.link)}`}
+                alt="Join QR code"
+                className="w-full h-full object-contain"
+              />
+            </div>
+
+            <div className="bg-zinc-950 p-4 rounded-3xl mb-6 text-left break-words">
+              <p className="text-sm text-zinc-400 mb-2">Join link</p>
+              <p className="text-sm text-emerald-300">{qrModal.link}</p>
+            </div>
+
+            <div className="flex gap-3 flex-col">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(qrModal.link);
+                  alert('Join link copied to clipboard');
+                }}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 py-4 rounded-2xl font-bold"
+              >
+                Copy Join Link
+              </button>
+              <button
+                onClick={() => setQrModal(null)}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {qrScannerModal && (
+        <div className="fixed inset-0 bg-black/90 z-[80] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-3xl p-8 max-w-lg w-full">
+            <h2 className="text-3xl font-bold mb-6 text-center">Scan Event QR Code</h2>
+            <p className="text-zinc-400 mb-6 text-center">
+              Scan an event QR code to create a join button for players.
+            </p>
+
+            <div className="relative mb-6">
+              <video
+                ref={videoRef}
+                className="w-full h-64 bg-black rounded-2xl object-cover"
+                playsInline
+                muted
+              />
+              {scanning && (
+                <div className="absolute inset-0 border-2 border-emerald-400 rounded-2xl animate-pulse pointer-events-none" />
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={stopQrScan}
+                className="flex-1 py-4 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-bold"
+              >
+                Cancel
+              </button>
+              {!scanning && (
+                <button
+                  onClick={startQrScan}
+                  className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 rounded-2xl font-bold"
+                >
+                  Start Scanning
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <CreateDraftQueue 

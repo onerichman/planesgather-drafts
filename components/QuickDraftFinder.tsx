@@ -110,6 +110,8 @@ export default function QuickDraftFinder() {
 
     const filtered = ((data || []) as unknown as NearbyQueue[]).filter((q) => {
       if (!q.stores?.lat || !q.stores?.lng) return false;
+      // Exclude commander pods - only show draft queues
+      if (q.label && q.label.toLowerCase().includes('commander')) return false;
       const dist = getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng);
       return dist <= 100;
     });

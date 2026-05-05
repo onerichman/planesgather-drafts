@@ -89,13 +89,23 @@ export default function MyQueues() {
             )}
 
             {q.status === 'firing' && q.firing_code && (
-              <div 
-                onClick={() => copyCode(q.firing_code ?? '')}
-                className="p-4 bg-black rounded-xl text-2xl font-mono text-center mb-4 border border-yellow-400 cursor-pointer hover:bg-zinc-800 transition"
-              >
-                Companion Code: {q.firing_code}
-                <span className="text-sm text-yellow-400 block mt-1">(Tap to copy)</span>
-              </div>
+              <>
+                <div 
+                  onClick={() => copyCode(q.firing_code ?? '')}
+                  className="p-4 bg-black rounded-xl text-2xl font-mono text-center mb-4 border border-yellow-400 cursor-pointer hover:bg-zinc-800 transition"
+                >
+                  Companion Code: {q.firing_code}
+                  <span className="text-sm text-yellow-400 block mt-1">(Tap to copy)</span>
+                </div>
+                <button
+                  onClick={() => {
+                    window.location.href = `/join?code=${encodeURIComponent(q.firing_code || '')}`;
+                  }}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 py-4 rounded-xl font-bold mb-4"
+                >
+                  Press here to join the queue in your companion app
+                </button>
+              </>
             )}
 
             {(q.status === 'firing' || q.status === 'open') && (

@@ -55,6 +55,8 @@ export default function MyActiveQueues() {
 
     const uniqueQueues = new Map<number, ActiveQueue>();
     for (const queue of (data || []) as unknown as ActiveQueue[]) {
+      // Exclude commander pods - only show draft queues
+      if (queue.label && queue.label.toLowerCase().includes('commander')) continue;
       if (!withdrawnIds.includes(queue.id)) {
         uniqueQueues.set(queue.id, queue);
       }
@@ -113,7 +115,7 @@ export default function MyActiveQueues() {
             <p>Status: <span className={`capitalize font-bold ${getStatusClass(q.status)}`}>{q.status}</span></p>
             {q.label && <p className="text-yellow-400">{q.label}</p>}
             {q.status === 'firing' && q.firing_code && (
-              <div className="mt-4 p-4 bg-black rounded-xl text-center border border-orange-400">
+              <div className="mt-4 p-4 bg-black rounded-xl border border-orange-400">
                 <p className="text-sm text-orange-300 mb-1">Companion App Code</p>
                 <button
                   onClick={() => copyCompanionCode(q)}
@@ -121,9 +123,19 @@ export default function MyActiveQueues() {
                 >
                   {q.firing_code}
                 </button>
-                <p className="text-xs text-zinc-400 mt-1">
+                <p className="text-xs text-zinc-400 mt-1 mb-4">
                   {copiedQueueId === q.id ? 'Copied' : 'Tap code to copy'}
                 </p>
+
+                <button
+                  onClick={() => {
+                    const joinLink = `${window.location.origin}/join?code=${encodeURIComponent(q.firing_code || '')}`;
+                    window.location.href = joinLink;
+                  }}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 py-3 rounded-xl text-base font-bold transition"
+                >
+                  Press here to join the queue in your companion app
+                </button>
               </div>
             )}
             {q.status === 'canceled' && (

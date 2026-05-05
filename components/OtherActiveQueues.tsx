@@ -72,11 +72,13 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     return <div className="px-8 mt-12 text-zinc-400">Loading active queues...</div>;
   }
 
-  // Strong filter: hide if already joined OR has players
+  // Strong filter: hide if already joined OR has players OR is a commander queue
   const filteredQueues = queues.filter(q => {
     const isJoined = joinedQueueIds.includes(q.id);
     const hasPlayers = q.current_count > 0;
-    return !isJoined && !hasPlayers;
+    // Exclude commander pods - only show draft queues
+    const isCommander = q.label && q.label.toLowerCase().includes('commander');
+    return !isJoined && !hasPlayers && !isCommander;
   });
 
   return (

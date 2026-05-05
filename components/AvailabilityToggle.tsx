@@ -1,28 +1,107 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+
+type GameType = 'any' | 'commander' | 'draft' | 'standard' | null;
 
 export default function AvailabilityToggle() {
   const [status, setStatus] = useState<'off' | 'looking_now'>('off');
+  const [gameType, setGameType] = useState<GameType>(null);
+  const [showGameTypeModal, setShowGameTypeModal] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const toggle = async () => {
-    const newStatus = status === 'off' ? 'looking_now' : 'off';
-    await supabase.from('profiles').update({ 
-      availability_status: newStatus,
-      availability_updated_at: new Date().toISOString()
+  const gameTypeLabels: Record<Exclude<GameType, null>, string> = {
+    any: 'Any Game Type',
+    commander: 'Commander',
+    draft: 'Draft',
+    standard: 'Standard'
+  };
+
+  // Load saved preference from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('availabilityGameType');
+    if (saved) setGameType(saved as GameType);
+  }, []);
+
+  const handleToggle = async () => {
+    if (status === 'off') {
+      // Turning ON - show game type selector
+      setShowGameTypeModal(true);
+    } else {
+      // Turning OFF
+      setLoading(true);
+      await supabase.from('profiles').update({ 
+        availability_status: 'off',
+        availability_updated_at: new Date().toISOString(),
+        game_type_preference: null
+      });
+      setStatus('off');
+      setGameType(null);
+      localStorage.removeItem('availabilityGameType');
+      setLoading(false);
+    }
+  };
+
+  const selectGameType = async (selected: Exclude<GameType, null>) => {
+    setLoading(true);
+    setGameType(selected);
+    localStorage.setItem('availabilityGameType', selected);
+
+    await supabase.from('profiles').update({
+      availability_status: 'looking_now',
+      availability_updated_at: new Date().toISOString(),
+      game_type_preference: selected
     });
-    setStatus(newStatus);
+
+    setStatus('looking_now');
+    setShowGameTypeModal(false);
+    setLoading(false);
   };
 
   return (
-    <div className="fixed bottom-28 left-1/2 -translate-x-1/2 bg-zinc-900 border border-green-500 rounded-full px-6 py-3 shadow-2xl z-50 flex items-center gap-4">
-      <span className="font-medium">I&apos;m open for games</span>
-      <button
-        onClick={toggle}
-        className={`px-6 py-2 rounded-full font-bold transition ${status === 'off' ? 'bg-zinc-700' : 'bg-green-600'}`}
-      >
-        {status === 'off' ? 'OFF' : 'ON'}
-      </button>
-    </div>
+    <>
+      <div className="fixed top-8 right-8 z-40 flex items-center gap-3 bg-zinc-900/80 border border-green-500/30 rounded-2xl px-6 py-3 backdrop-blur-sm">
+        <span className="font-medium text-sm">{status === 'off' ? 'Open for games' : `Looking: ${gameTypeLabels[gameType!]}`}</span>
+        <button
+          onClick={handleToggle}
+          disabled={loading}
+          className={`px-5 py-2 rounded-full font-bold transition text-sm ${
+            status === 'off' 
+              ? 'bg-zinc-700 hover:bg-zinc-600' 
+              : 'bg-green-600 hover:bg-green-700'
+          } disabled:opacity-50`}
+        >
+          {loading ? '...' : (status === 'off' ? 'OFF' : 'ON')}
+        </button>
+      </div>
+
+      {showGameTypeModal && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-3xl p-8 max-w-md w-full text-center">
+            <h2 className="text-3xl font-bold mb-8">What type of game are you looking for?</h2>
+            
+            <div className="space-y-3">
+              {(['any', 'commander', 'draft', 'standard'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => selectGameType(type)}
+                  disabled={loading}
+                  className="w-full p-4 bg-zinc-800 hover:bg-green-600 transition rounded-2xl font-bold text-lg disabled:opacity-50"
+                >
+                  {gameTypeLabels[type]}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowGameTypeModal(false)}
+              className="mt-6 w-full py-3 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-bold text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
