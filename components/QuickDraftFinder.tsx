@@ -108,11 +108,17 @@ export default function QuickDraftFinder() {
         return;
       }
       setSelectedQueueId(queueId);
-      setShowOptIn(true);
+      
+      // Check if user is already opted in before showing phone modal
+      if (skipPhonePrompt || Boolean(userPhoneNumber)) {
+        joinSelectedQueue(queueId);
+      } else {
+        setShowOptIn(true);
+      }
     };
     window.addEventListener('joinQueue', handleJoinEvent);
     return () => window.removeEventListener('joinQueue', handleJoinEvent);
-  }, [joinedQueueIds]);
+  }, [joinedQueueIds, skipPhonePrompt, userPhoneNumber]);
 
   // Listen for player requests approved by store
   useEffect(() => {

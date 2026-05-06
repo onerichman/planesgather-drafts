@@ -143,8 +143,8 @@ CREATE POLICY "Store owners can view requests for their store" ON draft_requests
     EXISTS (SELECT 1 FROM stores WHERE stores.id = draft_requests.store_id AND owner_id = auth.uid())
   );
 
-CREATE POLICY "Authenticated users can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Anyone can create draft requests" ON draft_requests
+  FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Store owners can update draft requests" ON draft_requests
   FOR UPDATE USING (
