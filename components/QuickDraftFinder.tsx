@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getDistance } from '@/utils/distance';
+import { getCurrentUserId, readNumberList, writeNumberList } from '@/utils/storage';
 import PhoneOptInModal from './PhoneOptInModal';
 
 type NearbyQueue = {
@@ -18,21 +19,11 @@ type NearbyQueue = {
   };
 };
 
-const readNumberList = (key: string) => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeNumberList = (key: string, ids: number[]) => {
-  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
-};
-
 export default function QuickDraftFinder() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userPhoneNumber, setUserPhoneNumber] = useState<string | null>(null);
+  const [skipPhonePrompt, setSkipPhonePrompt] = useState(false);
   const [queues, setQueues] = useState<NearbyQueue[]>([]);
   const [joinedQueueIds, setJoinedQueueIds] = useState<number[]>([]);
   const [showOptIn, setShowOptIn] = useState(false);
@@ -41,18 +32,35 @@ export default function QuickDraftFinder() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // Load joined queues from localStorage
+  // Load joined queues from localStorage per current user
   useEffect(() => {
-    const syncJoinedQueues = () => setJoinedQueueIds(readNumberList('joinedQueueIds'));
-    syncJoinedQueues();
+    const loadUser = async () => {
+      const userResult = await getCurrentUserId();
+      setUserId(userResult);
+      setJoinedQueueIds(readNumberList('joinedQueueIds', userResult));
+
+      if (userResult) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('phone_number, skip_phone_prompt')
+          .eq('id', userResult)
+          .single();
+
+        setUserPhoneNumber(profile?.phone_number || null);
+        setSkipPhonePrompt(Boolean(profile?.skip_phone_prompt));
+      }
+    };
+
+    loadUser();
+    const syncJoinedQueues = () => setJoinedQueueIds(readNumberList('joinedQueueIds', userId));
     window.addEventListener('joinedQueuesChanged', syncJoinedQueues);
     return () => window.removeEventListener('joinedQueuesChanged', syncJoinedQueues);
-  }, []);
+  }, [userId]);
 
-  // Save to localStorage whenever joinedQueueIds changes
-  useEffect(() => {
-    localStorage.setItem('joinedQueueIds', JSON.stringify(joinedQueueIds));
-  }, [joinedQueueIds]);
+  // Remove the useEffect that saves to localStorage - let other components handle this
+  // useEffect(() => {
+  //   localStorage.setItem('joinedQueueIds', JSON.stringify(joinedQueueIds));
+  // }, [joinedQueueIds]);
 
   // Get user location
   useEffect(() => {
@@ -84,7 +92,8 @@ export default function QuickDraftFinder() {
       if (queueId && !joinedQueueIds.includes(queueId)) {
         const newList = [...joinedQueueIds, queueId];
         setJoinedQueueIds(newList);
-        localStorage.setItem('joinedQueueIds', JSON.stringify(newList));
+        writeNumberList('joinedQueueIds', newList, userId);
+        window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
         console.log("✅ Auto-added approved queue:", queueId);
       }
     };
@@ -120,22 +129,11 @@ export default function QuickDraftFinder() {
     setMessage(filtered.length === 0 ? "No drafts within 100 miles" : "");
   };
 
-  function attemptJoin(queueId: number) {
-    if (joinedQueueIds.includes(queueId)) {
-      alert("You are already in this queue!");
-      return;
-    }
-    setSelectedQueueId(queueId);
-    setShowOptIn(true);
-  }
-
-  const handleOptInSuccess = async () => {
-    if (!selectedQueueId) return;
-
+  const joinSelectedQueue = async (queueId: number) => {
     const { data: q } = await supabase
       .from('draft_queues')
       .select('current_count')
-      .eq('id', selectedQueueId)
+      .eq('id', queueId)
       .single();
 
     const newCount = (q?.current_count || 0) + 1;
@@ -143,20 +141,22 @@ export default function QuickDraftFinder() {
     await supabase
       .from('draft_queues')
       .update({ current_count: newCount })
-      .eq('id', selectedQueueId);
+      .eq('id', queueId);
 
-    // Immediate save to localStorage
-    const newJoinedList = [...joinedQueueIds, selectedQueueId];
+    const newJoinedList = [...joinedQueueIds, queueId];
     setJoinedQueueIds(newJoinedList);
-    writeNumberList('joinedQueueIds', newJoinedList);
-    writeNumberList('withdrawnQueueIds', readNumberList('withdrawnQueueIds').filter((id) => id !== selectedQueueId));
+    writeNumberList('joinedQueueIds', newJoinedList, userId);
+    writeNumberList(
+      'withdrawnQueueIds',
+      readNumberList('withdrawnQueueIds', userId).filter((id) => id !== queueId),
+      userId
+    );
     window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
 
     console.log("✅ Saved joined queues:", newJoinedList);
 
     await findNearbyDrafts();
 
-    // Refresh other components
     if (typeof window !== 'undefined') {
       window.refreshMyQueues?.();
       window.refreshOtherQueues?.();
@@ -164,6 +164,27 @@ export default function QuickDraftFinder() {
 
     setShowOptIn(false);
     setShowSuccess(true);
+  };
+
+  function attemptJoin(queueId: number) {
+    if (joinedQueueIds.includes(queueId)) {
+      alert("You are already in this queue!");
+      return;
+    }
+
+    setSelectedQueueId(queueId);
+
+    if (skipPhonePrompt || Boolean(userPhoneNumber)) {
+      joinSelectedQueue(queueId);
+      return;
+    }
+
+    setShowOptIn(true);
+  }
+
+  const handleOptInSuccess = async () => {
+    if (!selectedQueueId) return;
+    await joinSelectedQueue(selectedQueueId);
   };
 
   const closeSuccess = () => {

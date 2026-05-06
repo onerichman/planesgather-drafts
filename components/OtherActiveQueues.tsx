@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getCurrentUserId, readNumberList } from '@/utils/storage';
 
 interface Props {
   onJoin: (queueId: number) => void;
@@ -19,6 +20,7 @@ type ActiveQueue = {
 export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-runtime").JSX.Element {
   const [queues, setQueues] = useState<ActiveQueue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const loadQueues = useCallback(async (): Promise<void> => {
     const { data } = await supabase
@@ -39,6 +41,8 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
   }, []);
 
   useEffect(() => {
+    const loadUser = async () => setUserId(await getCurrentUserId());
+    loadUser();
     loadQueues();
 
     const channel = supabase
@@ -58,14 +62,10 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     };
   }, [loadQueues]);
 
-  // Read joined queues
+  // Read joined queues for current user
   let joinedQueueIds: number[] = [];
   if (typeof window !== 'undefined') {
-    try {
-      joinedQueueIds = JSON.parse(localStorage.getItem('joinedQueueIds') || '[]');
-    } catch {
-      joinedQueueIds = [];
-    }
+    joinedQueueIds = readNumberList('joinedQueueIds', userId);
   }
 
   if (loading) {

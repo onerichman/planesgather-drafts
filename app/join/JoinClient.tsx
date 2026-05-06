@@ -2,19 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-
-const readNumberList = (key: string) => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeNumberList = (key: string, ids: number[]) => {
-  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
-};
+import { getCurrentUserId, readNumberList, writeNumberList } from '@/utils/storage';
 
 const maxPlayers = (label?: string | null) =>
   label?.toLowerCase().includes('commander') ? 4 : 8;
@@ -33,8 +21,12 @@ export default function JoinClient({ code }: { code: string }) {
   const [queue, setQueue] = useState<JoinQueue | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'joining' | 'joined' | 'error'>('loading');
   const [message, setMessage] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
+    const loadUser = async () => setUserId(await getCurrentUserId());
+    loadUser();
+
     const fetchQueue = async () => {
       if (!code) {
         setStatus('error');
@@ -73,9 +65,10 @@ export default function JoinClient({ code }: { code: string }) {
 
     setStatus('joining');
 
+    const updatedCount = queue.current_count + 1;
     const { error } = await supabase
       .from('draft_queues')
-      .update({ current_count: queue.current_count + 1 })
+      .update({ current_count: updatedCount })
       .eq('id', queue.id);
 
     if (error) {
@@ -84,8 +77,10 @@ export default function JoinClient({ code }: { code: string }) {
       return;
     }
 
-    const joinedIds = readNumberList('joinedQueueIds');
-    writeNumberList('joinedQueueIds', [...joinedIds, queue.id]);
+    setQueue({ ...queue, current_count: updatedCount });
+
+    const joinedIds = readNumberList('joinedQueueIds', userId);
+    writeNumberList('joinedQueueIds', [...joinedIds, queue.id], userId);
     window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
 
     setStatus('joined');

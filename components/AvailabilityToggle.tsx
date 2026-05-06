@@ -17,10 +17,17 @@ export default function AvailabilityToggle() {
     standard: 'Standard'
   };
 
-  // Load saved preference from localStorage
+  // Load saved preferences from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('availabilityGameType');
-    if (saved) setGameType(saved as GameType);
+    const savedStatus = localStorage.getItem('availabilityStatus');
+    const savedGameType = localStorage.getItem('availabilityGameType');
+    
+    if (savedStatus === 'looking_now') {
+      setStatus('looking_now');
+    }
+    if (savedGameType) {
+      setGameType(savedGameType as GameType);
+    }
   }, []);
 
   const handleToggle = async () => {
@@ -37,6 +44,7 @@ export default function AvailabilityToggle() {
       });
       setStatus('off');
       setGameType(null);
+      localStorage.removeItem('availabilityStatus');
       localStorage.removeItem('availabilityGameType');
       setLoading(false);
     }
@@ -46,6 +54,7 @@ export default function AvailabilityToggle() {
     setLoading(true);
     setGameType(selected);
     localStorage.setItem('availabilityGameType', selected);
+    localStorage.setItem('availabilityStatus', 'looking_now');
 
     await supabase.from('profiles').update({
       availability_status: 'looking_now',
@@ -60,7 +69,7 @@ export default function AvailabilityToggle() {
 
   return (
     <>
-      <div className="fixed top-8 right-8 z-40 flex items-center gap-3 bg-zinc-900/80 border border-green-500/30 rounded-2xl px-6 py-3 backdrop-blur-sm">
+      <div className="flex items-center justify-center gap-3 bg-zinc-900/80 border border-green-500/30 rounded-2xl px-6 py-3 backdrop-blur-sm max-w-fit mx-auto">
         <span className="font-medium text-sm">{status === 'off' ? 'Open for games' : `Looking: ${gameTypeLabels[gameType!]}`}</span>
         <button
           onClick={handleToggle}

@@ -50,7 +50,6 @@ type RealtimeDraftRequestPayload = {
 const generateCompanionCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 const denialReasons = ["Too busy", "Another event", "Too close to store closing"];
-const STORE_PASSWORD = "1234";   // ← Change this anytime you want
 
 export default function StorePage({ params }: { params: Promise<{ slug: string }> }) {
   const resolvedParams = use(params);
@@ -65,9 +64,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Password Protection
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passwordAttempt, setPasswordAttempt] = useState('');
+  // Auth
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
   // Approval modal
   const [approvingRequest, setApprovingRequest] = useState<DraftRequest | null>(null);
@@ -77,59 +75,100 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [qrModal, setQrModal] = useState<{ code: string; link: string } | null>(null);
   const [qrScannerModal, setQrScannerModal] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [scannedEventLinks, setScannedEventLinks] = useState<Array<{ url: string; name: string; id: string }>>([]);
+  const [showJoinCodeModal, setShowJoinCodeModal] = useState(false);
+  const [selectedEntryMethod, setSelectedEntryMethod] = useState<'manual' | 'scan' | null>(null);
+  const [manualJoinCode, setManualJoinCode] = useState('');
+  const [pendingQueueId, setPendingQueueId] = useState<number | null>(null);
+  const [joinNowLinks, setJoinNowLinks] = useState<Array<{ id: string; label: string; deepLink: string; fallback: string }>>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const qrScannerRef = useRef<QrScanner | null>(null);
   const pendingRequestIdsRef = useRef<Set<number>>(new Set());
 
-  const checkPassword = () => {
-    if (passwordAttempt === STORE_PASSWORD) {
-      setIsAuthenticated(true);
-      loadStoreData();
-    } else {
-      alert("Incorrect password. Try again.");
-      setPasswordAttempt('');
+  const checkAuthorization = async () => {
+    try {
+      // Get current session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError || !session) {
+        setStoreError('You must be signed in to access the store dashboard.');
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
+
+      // Get user profile to check if they're a store owner
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('user_type')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profileError || !profile) {
+        setStoreError('Could not verify your account type.');
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
+
+      // Check if user is a store owner
+      if (profile.user_type !== 'store') {
+        setStoreError('Only store owners can access this dashboard. Please log in with a store account.');
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
+
+      // Load the store by slug
+      const { data: storeData, error: storeError } = await supabase
+        .from('stores')
+        .select('*')
+        .eq('slug', slug)
+        .maybeSingle();
+
+      if (storeError || !storeData) {
+        setStoreError('Store not found.');
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
+
+      // Check if user owns this store
+      if (storeData.owner_id !== session.user.id) {
+        setStoreError('You do not own this store.');
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
+
+      // All checks passed
+      setIsAuthorized(true);
+      setStore(storeData);
+      loadQueues(storeData.id);
+      loadPendingRequests(storeData.id, { notifyNew: false });
+      subscribeToChanges(storeData.id);
+      setLoading(false);
+    } catch (err) {
+      console.error('Authorization check failed:', err);
+      setStoreError('An error occurred. Please try again.');
+      setIsAuthorized(false);
+      setLoading(false);
     }
   };
 
   const loadStoreData = async () => {
-    setStoreError('');
-
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      setStore(null);
-      setStoreError('Supabase is not configured for this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.');
-      setLoading(false);
-      return;
-    }
-
-    const { data: storeData, error } = await supabase
-      .from('stores')
-      .select('*')
-      .eq('slug', slug)
-      .maybeSingle();
-
-    if (error) {
-      setStore(null);
-      setStoreError(`Could not load store: ${error.message}`);
-      setLoading(false);
-      return;
-    }
-
-    setStore(storeData);
-    if (storeData) {
-      loadQueues(storeData.id);
-      loadPendingRequests(storeData.id, { notifyNew: false });
-      subscribeToChanges(storeData.id);
-    }
-    setLoading(false);
+    // Removed - now handled by checkAuthorization
   };
 
   useEffect(() => {
+    // Check auth on mount
+    checkAuthorization();
+
+    // Get user location
     navigator.geolocation.getCurrentPosition(
       (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => console.log('Location access denied')
     );
-  }, []);
+  }, [slug]);
 
   const loadQueues = async (storeId: number) => {
     const { data } = await supabase
@@ -227,6 +266,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     const nextNumber = (existing?.[0]?.queue_number || 0) + 1;
 
     const { data: newQueue } = await supabase.from('draft_queues').insert({
+      type: 'draft',
       store_id: storeId,
       current_count: 1,
       status: 'open',
@@ -286,38 +326,87 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     loadPendingRequests(store.id);
   };
 
-  const getJoinLink = (code: string) => {
-    if (typeof window === 'undefined') return `/join?code=${encodeURIComponent(code)}`;
-    return `${window.location.origin}/join?code=${encodeURIComponent(code)}`;
+  const markFiring = (queueId: number) => {
+    setPendingQueueId(queueId);
+    setShowJoinCodeModal(true);
+    setSelectedEntryMethod(null);
+    setManualJoinCode('');
   };
 
-  const markFiring = async (queueId: number, useLink = false) => {
-    if (!store) return;
-    const label = prompt("Enter label/time (e.g. Table 1 at 3pm):", "");
-    const code = prompt("Enter the 6-digit companion code:", generateCompanionCode());
+  const buildCompanionDeepLink = (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
 
-    if (!code || code.length !== 6) {
-      alert("Please enter a valid 6-digit code");
-      return;
+    const isUrl = trimmed.startsWith('http://') || trimmed.startsWith('https://');
+    if (isUrl) {
+      try {
+        const parsedUrl = new URL(trimmed);
+        const label = parsedUrl.searchParams.get('name') || parsedUrl.searchParams.get('title') || parsedUrl.hostname || 'Magic Event';
+        const deepLink = `mtgcompanion://join?url=${encodeURIComponent(trimmed)}`;
+        return {
+          deepLink,
+          fallback: trimmed,
+          label,
+        };
+      } catch {
+        return null;
+      }
     }
+
+    const code = trimmed.replace(/\s+/g, '');
+    if (!code) return null;
+    const deepLink = `mtgcompanion://join?code=${encodeURIComponent(code)}`;
+    return {
+      deepLink,
+      fallback: `https://mtgcompanionlink.example/join?code=${encodeURIComponent(code)}`,
+      label: `Event ${code}`,
+    };
+  };
+
+  const finalizeQueueFiring = async (joinData: { deepLink: string; fallback: string; label: string }) => {
+    if (!store || pendingQueueId === null) return;
+
+    const queueId = pendingQueueId;
+    const label = prompt('Enter label/time for the event (e.g. Table 1 at 3pm):', '');
+    const internalCode = generateCompanionCode();
 
     await supabase
       .from('draft_queues')
       .update({
         status: 'firing',
-        firing_code: code,
+        firing_code: internalCode,
         label: label?.trim() || null,
       })
       .eq('id', queueId);
 
     loadQueues(store.id);
 
-    if (useLink) {
-      setQrModal({ code, link: getJoinLink(code) });
-    } else {
-      // Show QR scanner modal for scanning event links
-      startQrScan();
+    const newLink = {
+        id: `${queueId}-${encodeURIComponent(joinData.deepLink)}`,
+        label: joinData.label,
+        deepLink: joinData.deepLink,
+        fallback: joinData.fallback,
+      };
+    setJoinNowLinks((prev) => [newLink, ...prev]);
+    setShowJoinCodeModal(false);
+    setSelectedEntryMethod(null);
+    setManualJoinCode('');
+    setPendingQueueId(null);
+  };
+
+  const handleManualJoinCode = async () => {
+    if (!manualJoinCode.trim()) {
+      alert('Please enter the 6-digit join code.');
+      return;
     }
+
+    const joinData = buildCompanionDeepLink(manualJoinCode);
+    if (!joinData) {
+      alert('Invalid join code format. Please enter a valid code or URL.');
+      return;
+    }
+
+    finalizeQueueFiring(joinData);
   };
 
   const markCanceled = async (queueId: number) => {
@@ -384,13 +473,11 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       console.log('QR code scanned:', scannedData);
 
       let eventUrl = '';
-      let eventName = 'Scanned Event';
 
       // Try to parse as URL
       try {
-        const url = new URL(scannedData);
+        new URL(scannedData);
         eventUrl = scannedData;
-        eventName = url.searchParams.get('name') || url.searchParams.get('title') || url.hostname || 'Scanned Event';
       } catch {
         // If not a valid URL, check if it's a relative path or just text
         if (scannedData.startsWith('http://') || scannedData.startsWith('https://')) {
@@ -401,17 +488,21 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         }
       }
 
-      // Add to scanned event links
-      const newLink = {
-        url: eventUrl,
-        name: eventName,
-        id: eventUrl // Use URL as unique ID
-      };
+      const joinData = buildCompanionDeepLink(eventUrl);
+      if (!joinData) {
+        alert('Could not parse the scanned event link into a Companion join link.');
+        stopQrScan();
+        return;
+      }
 
-      setScannedEventLinks(prev => [newLink, ...prev]);
+      if (pendingQueueId === null) {
+        alert('Start this scan from a queue by choosing Mark as Firing first.');
+        stopQrScan();
+        return;
+      }
 
-      alert(`✅ Event link scanned!\n\n${eventName}\n${eventUrl}\n\nPlayers can now click the button to join.`);
-
+      await finalizeQueueFiring(joinData);
+      alert(`✅ Companion join link created for ${joinData.label}. Players can tap the Join Now button.`);
       stopQrScan();
 
     } catch (error) {
@@ -420,54 +511,29 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     }
   };
 
-  // ==================== PASSWORD SCREEN ====================
-  if (!isAuthenticated) {
+  // ==================== AUTH CHECK ====================
+  if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-8">
         <div className="bg-zinc-900 p-10 rounded-3xl max-w-md w-full text-center">
           <h1 className="text-4xl font-bold mb-8">Store Dashboard</h1>
-          <p className="mb-6 text-zinc-400">Enter Password</p>
-          
-          <input
-            type="password"
-            value={passwordAttempt}
-            onChange={(e) => setPasswordAttempt(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && checkPassword()}
-            className="w-full p-5 bg-zinc-800 rounded-2xl text-center text-3xl mb-6"
-            placeholder="••••"
-          />
-
-          <button
-            onClick={checkPassword}
-            className="w-full bg-amber-600 hover:bg-amber-700 py-4 rounded-2xl font-bold text-lg"
-          >
-            Unlock Dashboard
-          </button>
-
-          <button
-            onClick={() => window.location.href = '/'}
-            className="mt-8 text-zinc-400 hover:text-white text-sm"
-          >
-            ← Back to Player App
-          </button>
+          <p className="text-zinc-400">Loading...</p>
         </div>
       </div>
     );
   }
 
-  if (loading) return <div className="p-8 text-center text-xl">Loading store...</div>;
-  if (!store) {
+  if (!isAuthorized) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
-        <div className="bg-zinc-900 p-8 rounded-3xl max-w-lg w-full text-center">
-          <h1 className="text-3xl font-bold mb-4">Store Not Found</h1>
-          <p className="text-zinc-400 mb-4">No store matched slug: <span className="font-mono text-white">{slug}</span></p>
-          {storeError && <p className="text-red-300 text-sm">{storeError}</p>}
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-8">
+        <div className="bg-zinc-900 p-10 rounded-3xl max-w-md w-full text-center">
+          <h1 className="text-4xl font-bold mb-8">Store Dashboard</h1>
+          <p className="text-red-300 mb-6">{storeError || 'Access denied'}</p>
           <button
             onClick={() => window.location.href = '/'}
-            className="mt-6 bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-xl font-medium"
+            className="w-full bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl font-bold text-lg"
           >
-            Back to Player App
+            ← Back to Player App
           </button>
         </div>
       </div>
@@ -477,7 +543,10 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-6">
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-4xl font-bold">{store.name}</h1>
+        <div>
+          <h1 className="text-4xl font-bold">{store.name}</h1>
+          <p className="text-zinc-400 mt-1">Dashboard</p>
+        </div>
         <button
           onClick={() => window.location.href = '/'}
           className="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-xl font-medium"
@@ -511,6 +580,105 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       {requestNotice && (
         <div className="mb-8 p-5 bg-orange-900/80 border border-orange-400 rounded-2xl text-orange-100 text-center text-lg font-bold">
           {requestNotice}
+        </div>
+      )}
+
+      {joinNowLinks.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold mb-6">Join Now Links</h2>
+          <div className="space-y-4">
+            {joinNowLinks.map((link) => (
+              <div key={link.id} className="bg-zinc-800 p-6 rounded-3xl">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm text-zinc-400">{link.label}</div>
+                    <div className="text-sm text-zinc-400 break-all">{link.fallback}</div>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <button
+                      onClick={() => window.open(link.deepLink, '_blank')}
+                      className="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-xl font-bold"
+                    >
+                      Open Companion
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                          navigator.clipboard.writeText(link.deepLink);
+                          alert('Deep link copied to clipboard!');
+                        }
+                      }}
+                      className="bg-zinc-700 hover:bg-zinc-600 px-6 py-3 rounded-xl font-bold"
+                    >
+                      Copy Join Now Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showJoinCodeModal && (
+        <div className="fixed inset-0 bg-black/90 z-[80] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-3xl p-8 max-w-lg w-full">
+            <h2 className="text-3xl font-bold mb-4 text-center">How do you want to enter the Join Code?</h2>
+            <p className="text-zinc-400 mb-6 text-center">
+              Choose manual entry or scan the Magic Event Link QR code. This will create a Companion App Join Now link.
+            </p>
+
+            <div className="grid gap-4 md:grid-cols-2 mb-6">
+              <button
+                onClick={() => setSelectedEntryMethod('manual')}
+                className={`p-5 rounded-3xl text-left border ${selectedEntryMethod === 'manual' ? 'border-emerald-500 bg-zinc-800' : 'border-zinc-700 bg-zinc-950 hover:bg-zinc-900'}`}
+              >
+                <div className="text-lg font-bold">Manual Entry</div>
+                <div className="text-zinc-400 mt-2 text-sm">Type the 6-digit join code and generate the Companion App deep link.</div>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedEntryMethod('scan');
+                  setShowJoinCodeModal(false);
+                  startQrScan();
+                }}
+                className={`p-5 rounded-3xl text-left border ${selectedEntryMethod === 'scan' ? 'border-emerald-500 bg-zinc-800' : 'border-zinc-700 bg-zinc-950 hover:bg-zinc-900'}`}
+              >
+                <div className="text-lg font-bold">Scan QR Code</div>
+                <div className="text-zinc-400 mt-2 text-sm">Open the camera and scan the Magic Event Link QR code to create the join link.</div>
+              </button>
+            </div>
+
+            {selectedEntryMethod === 'manual' && (
+              <div className="space-y-4 mb-4">
+                <input
+                  type="text"
+                  value={manualJoinCode}
+                  onChange={(e) => setManualJoinCode(e.target.value)}
+                  placeholder="Enter 6-digit join code or event URL"
+                  className="w-full p-4 bg-zinc-800 rounded-3xl border border-zinc-700"
+                />
+                <button
+                  onClick={handleManualJoinCode}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 py-4 rounded-3xl font-bold"
+                >
+                  Generate Join Now Link
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                setShowJoinCodeModal(false);
+                setSelectedEntryMethod(null);
+                setManualJoinCode('');
+                setPendingQueueId(null);
+              }}
+              className="w-full bg-zinc-700 hover:bg-zinc-600 py-4 rounded-3xl font-bold"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -614,30 +782,6 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         </div>
       )}
 
-      {scannedEventLinks.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold mb-6">Scanned Event Links</h2>
-          <div className="space-y-4">
-            {scannedEventLinks.map((link) => (
-              <div key={link.id} className="bg-zinc-800 p-6 rounded-3xl">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h3 className="text-xl font-bold text-emerald-400">{link.name}</h3>
-                    <p className="text-zinc-400 text-sm mt-1">{link.url}</p>
-                  </div>
-                  <button
-                    onClick={() => window.open(link.url, '_blank')}
-                    className="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-xl font-bold"
-                  >
-                    Join Event
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <h2 className="text-3xl font-bold mb-6">Live Draft Queues</h2>
       {draftQueues.length === 0 ? (
         <p className="text-zinc-400 mb-6">No draft queues yet</p>
@@ -655,14 +799,9 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
               <div className="flex flex-col gap-2">
                 {q.status === 'open' && (
-                  <>
-                    <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
-                      Mark as Firing & Scan Event
-                    </button>
-                    <button onClick={() => markFiring(q.id, true)} className="bg-emerald-600 px-6 py-3 rounded-xl text-sm font-bold">
-                      Mark as Firing with QR Link
-                    </button>
-                  </>
+                  <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
+                    Mark as Firing
+                  </button>
                 )}
                 <button onClick={() => markCanceled(q.id)} className="bg-red-600 px-6 py-3 rounded-xl text-sm font-bold">
                   Cancel
@@ -699,14 +838,9 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
               <div className="flex flex-col gap-2">
                 {q.status === 'open' && (
-                  <>
-                    <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
-                      Mark as Firing & Scan Event
-                    </button>
-                    <button onClick={() => markFiring(q.id, true)} className="bg-emerald-600 px-6 py-3 rounded-xl text-sm font-bold">
-                      Mark as Firing with QR Link
-                    </button>
-                  </>
+                  <button onClick={() => markFiring(q.id)} className="bg-orange-600 px-6 py-3 rounded-xl text-sm font-bold">
+                    Mark as Firing
+                  </button>
                 )}
                 <button onClick={() => markCanceled(q.id)} className="bg-red-600 px-6 py-3 rounded-xl text-sm font-bold">
                   Cancel

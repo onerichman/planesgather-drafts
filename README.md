@@ -1,36 +1,103 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Planesgather
 
-## Getting Started
+A modern Magic: The Gathering draft and commander queue management app built with Next.js, Supabase, and Tailwind CSS.
 
-First, run the development server:
+## Features
+
+- 🎲 **Draft & Commander Queues** - Find players for your favorite formats
+- 🏪 **Store Management** - Stores can manage their draft events and settings
+- 📱 **Player Profiles** - Sign up with companion app integration
+- 🔐 **Authentication** - Secure login/signup with Supabase
+- 📱 **SMS Verification** - Easy signup without email verification (production-ready for SMS)
+
+## Setup Instructions
+
+### 1. Environment Variables
+
+Copy `.env.local.example` to `.env.local` and fill in your Supabase credentials:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+### 2. Database Setup
+
+**For a fresh Supabase project:**
+- Run `supabase-setup.sql` directly in your Supabase SQL Editor
+
+**If you have existing Planesgather tables:**
+1. Run `supabase-cleanup.sql` first (to drop existing tables)
+2. Then run `supabase-setup.sql`
+
+*Note: If cleanup gives "relation does not exist" errors, just run setup directly - your database is already clean.*
+
+### 3. Authentication Settings
+
+In your Supabase dashboard:
+1. Go to **Authentication → Settings**
+2. **Disable "Enable email confirmations"** for easier signup
+3. Optionally configure SMS OTP for production
+
+### 4. Install Dependencies
+
+```bash
+npm install
+```
+
+### 5. Run Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to see the app.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## SMS Verification Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+For production SMS verification instead of email:
+1. Sign up for [Twilio](https://twilio.com)
+2. Add Twilio credentials to `.env.local`
+3. Install Twilio: `npm install twilio`
+4. Follow the setup guide in `SMS_SETUP.md`
 
-## Learn More
+## Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Frontend**: Next.js 16, React 19, TypeScript, Tailwind CSS
+- **Backend**: Supabase (Auth, Database, Real-time)
+- **Deployment**: Vercel/Netlify ready
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/
+├── page.tsx              # Main landing page
+├── auth/                  # Auth pages
+├── join/                  # Player signup
+├── reset-password/        # Password reset
+└── store/[slug]/          # Store dashboard
 
-## Deploy on Vercel
+components/
+├── Login.tsx             # Authentication modal
+├── PlayerSignUp.tsx      # Player registration
+├── StoreSignUp.tsx       # Store registration
+├── AvailabilityToggle.tsx # Player availability
+└── ...
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+lib/
+└── supabase.ts           # Supabase client
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Database files:
+├── supabase-setup.sql    # Database schema
+├── supabase-cleanup.sql  # Cleanup existing tables
+└── SMS_SETUP.md          # SMS verification guide
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test with `npm run build`
+5. Submit a pull request

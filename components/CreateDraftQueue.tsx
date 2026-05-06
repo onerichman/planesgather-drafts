@@ -60,6 +60,7 @@ export default function CreateDraftQueue({ storeId, onCreated }: Props) {
       const nextNumber = (existing?.[0]?.queue_number || 0) + 1;
 
       const { error } = await supabase.from('draft_queues').insert({
+        type: 'draft',
         store_id: storeId,
         current_count: 0,
         status: 'open',

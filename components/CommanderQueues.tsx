@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getDistance } from '@/utils/distance';
+import { getCurrentUserId, readNumberList, writeNumberList } from '@/utils/storage';
 
 type Store = {
   id: number;
@@ -23,24 +24,13 @@ const joinedKey = 'joinedCommanderQueueIds';
 const withdrawnKey = 'withdrawnCommanderQueueIds';
 const maxPlayers = 4;
 
-const readNumberList = (key: string) => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeNumberList = (key: string, ids: number[]) => {
-  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
-};
 
 export default function CommanderQueues() {
   const [stores, setStores] = useState<Store[]>([]);
   const [queues, setQueues] = useState<CommanderQueue[]>([]);
   const [joinedIds, setJoinedIds] = useState<number[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -74,7 +64,7 @@ export default function CommanderQueues() {
   }, []);
 
   const loadQueues = useCallback(async () => {
-    const withdrawnIds = readNumberList(withdrawnKey);
+    const withdrawnIds = readNumberList(withdrawnKey, userId);
     const { data } = await supabase
       .from('draft_queues')
       .select(`
@@ -93,10 +83,14 @@ export default function CommanderQueues() {
       .filter((queue) => !withdrawnIds.includes(queue.id));
 
     setQueues(commanderQueues);
-    setJoinedIds(readNumberList(joinedKey));
-  }, []);
+    setJoinedIds(readNumberList(joinedKey, userId));
+  }, [userId]);
 
   useEffect(() => {
+    const loadUser = async () => {
+      setUserId(await getCurrentUserId());
+    };
+    loadUser();
     loadStores();
     loadQueues();
     const interval = setInterval(loadQueues, 2500);
@@ -131,6 +125,7 @@ export default function CommanderQueues() {
     const { data: newQueue, error } = await supabase
       .from('draft_queues')
       .insert({
+        type: 'commander',
         store_id: selectedStoreId,
         current_count: 1,
         status: 'open',
@@ -149,9 +144,9 @@ export default function CommanderQueues() {
     }
 
     if (newQueue?.id) {
-      writeNumberList(joinedKey, [...readNumberList(joinedKey), newQueue.id]);
-      writeNumberList(withdrawnKey, readNumberList(withdrawnKey).filter((id) => id !== newQueue.id));
-      setJoinedIds(readNumberList(joinedKey));
+      writeNumberList(joinedKey, [...readNumberList(joinedKey, userId), newQueue.id], userId);
+      writeNumberList(withdrawnKey, readNumberList(withdrawnKey, userId).filter((id) => id !== newQueue.id), userId);
+      setJoinedIds(readNumberList(joinedKey, userId));
     }
 
     setLabel('');
@@ -175,18 +170,18 @@ export default function CommanderQueues() {
       .update({ current_count: queue.current_count + 1 })
       .eq('id', queue.id);
 
-    writeNumberList(joinedKey, [...readNumberList(joinedKey), queue.id]);
-    writeNumberList(withdrawnKey, readNumberList(withdrawnKey).filter((id) => id !== queue.id));
-    setJoinedIds(readNumberList(joinedKey));
+    writeNumberList(joinedKey, [...readNumberList(joinedKey, userId), queue.id], userId);
+    writeNumberList(withdrawnKey, readNumberList(withdrawnKey, userId).filter((id) => id !== queue.id), userId);
+    setJoinedIds(readNumberList(joinedKey, userId));
     loadQueues();
   };
 
   const withdrawQueue = async (queue: CommanderQueue) => {
     if (!confirm('Withdraw from this Commander queue?')) return;
 
-    writeNumberList(joinedKey, readNumberList(joinedKey).filter((id) => id !== queue.id));
-    writeNumberList(withdrawnKey, [...readNumberList(withdrawnKey), queue.id]);
-    setJoinedIds(readNumberList(joinedKey));
+    writeNumberList(joinedKey, readNumberList(joinedKey, userId).filter((id) => id !== queue.id), userId);
+    writeNumberList(withdrawnKey, [...readNumberList(withdrawnKey, userId), queue.id], userId);
+    setJoinedIds(readNumberList(joinedKey, userId));
     setQueues((current) => current.filter((q) => q.id !== queue.id));
 
     await supabase
@@ -240,9 +235,9 @@ export default function CommanderQueues() {
       .update({ current_count: queue.current_count + 1 })
       .eq('id', queue.id);
 
-    writeNumberList(joinedKey, [...readNumberList(joinedKey), queue.id]);
-    writeNumberList(withdrawnKey, readNumberList(withdrawnKey).filter((id) => id !== queue.id));
-    setJoinedIds(readNumberList(joinedKey));
+    writeNumberList(joinedKey, [...readNumberList(joinedKey, userId), queue.id], userId);
+    writeNumberList(withdrawnKey, readNumberList(withdrawnKey, userId).filter((id) => id !== queue.id), userId);
+    setJoinedIds(readNumberList(joinedKey, userId));
     setShowNearbyModal(false);
     loadQueues();
   };

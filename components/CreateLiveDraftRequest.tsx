@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getCurrentUserId, readNumberList, writeNumberList } from '@/utils/storage';
 import { getDistance } from '@/utils/distance';
 
 const draftTypes = [
@@ -30,18 +31,6 @@ type DraftRequest = {
 
 const pendingRequestStorageKey = 'pendingDraftRequestIds';
 
-const readNumberList = (key: string) => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeNumberList = (key: string, ids: number[]) => {
-  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
-};
 
 const extractApprovedQueueId = (notes: string | null) => {
   const match = notes?.match(/approved_queue_id:(\d+)/);
@@ -59,6 +48,7 @@ export default function CreateLiveDraftRequest() {
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [selectedType, setSelectedType] = useState('');
   const [notes, setNotes] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -105,9 +95,9 @@ export default function CreateLiveDraftRequest() {
     } else {
       if (data?.id) {
         writeNumberList(pendingRequestStorageKey, [
-          ...readNumberList(pendingRequestStorageKey),
+          ...readNumberList(pendingRequestStorageKey, userId),
           data.id,
-        ]);
+        ], userId);
       }
 
       alert("✅ Request sent to the store! Waiting for approval...");
@@ -119,20 +109,21 @@ export default function CreateLiveDraftRequest() {
   };
 
   const addJoinedQueue = useCallback((queueId: number) => {
-    const joined = readNumberList('joinedQueueIds');
+    const joined = readNumberList('joinedQueueIds', userId);
     if (!joined.includes(queueId)) {
-      writeNumberList('joinedQueueIds', [...joined, queueId]);
-      console.log("âœ… Auto-added approved queue to localStorage:", queueId);
+      writeNumberList('joinedQueueIds', [...joined, queueId], userId);
+      window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
+      console.log("✅ Auto-added approved queue to localStorage:", queueId);
     }
 
-    setSuccessMessage("âœ… Your draft request was approved! You have been auto-added to the queue.");
+    setSuccessMessage("✅ Your draft request was approved! You have been auto-added to the queue.");
     setTimeout(() => setSuccessMessage(''), 8000);
     window.refreshMyQueues?.();
     window.refreshOtherQueues?.();
-  }, []);
+  }, [userId]);
 
   const checkApprovedRequests = useCallback(async () => {
-    const pendingIds = readNumberList(pendingRequestStorageKey);
+    const pendingIds = readNumberList(pendingRequestStorageKey, userId);
     if (pendingIds.length === 0) return;
 
     const { data } = await supabase
@@ -156,8 +147,8 @@ export default function CreateLiveDraftRequest() {
       }
     }
 
-    writeNumberList(pendingRequestStorageKey, stillPending);
-  }, [addJoinedQueue]);
+    writeNumberList(pendingRequestStorageKey, stillPending, userId);
+  }, [addJoinedQueue, userId]);
 
   // Listen for store approval and add to localStorage
   useEffect(() => {
@@ -166,10 +157,10 @@ export default function CreateLiveDraftRequest() {
       if (!queueId) return;
       addJoinedQueue(queueId);
 
-      const joined = JSON.parse(localStorage.getItem('joinedQueueIds') || '[]');
+      const joined = readNumberList('joinedQueueIds', userId);
       if (!joined.includes(queueId)) {
-        const newJoined = [...joined, queueId];
-        localStorage.setItem('joinedQueueIds', JSON.stringify(newJoined));
+        writeNumberList('joinedQueueIds', [...joined, queueId], userId);
+        window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
         console.log("✅ Auto-added approved queue to localStorage:", queueId);
       }
 
@@ -185,9 +176,13 @@ export default function CreateLiveDraftRequest() {
     window.addEventListener('queueApproved', handleQueueApproved);
 
     return () => window.removeEventListener('queueApproved', handleQueueApproved);
-  }, [addJoinedQueue]);
+  }, [addJoinedQueue, userId]);
 
   useEffect(() => {
+    const loadUser = async () => {
+      setUserId(await getCurrentUserId());
+    };
+    loadUser();
     checkApprovedRequests();
     const interval = setInterval(checkApprovedRequests, 3000);
     return () => clearInterval(interval);

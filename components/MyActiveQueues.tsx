@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getCurrentUserId, readNumberList, writeNumberList } from '@/utils/storage';
 
 type ActiveQueue = {
   id: number;
@@ -12,18 +13,6 @@ type ActiveQueue = {
   stores: { name: string };
 };
 
-const readNumberList = (key: string) => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeNumberList = (key: string, ids: number[]) => {
-  localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))));
-};
 
 const getStatusClass = (status: string) => {
   if (status === 'firing') return 'text-orange-400';
@@ -35,41 +24,60 @@ const getStatusClass = (status: string) => {
 export default function MyActiveQueues() {
   const [queues, setQueues] = useState<ActiveQueue[]>([]);
   const [copiedQueueId, setCopiedQueueId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  console.log("🚀 MyActiveQueues component mounted/updated", { userId });
 
   const loadMyQueues = useCallback(async () => {
-    const joinedIds = readNumberList('joinedQueueIds');
-    const withdrawnIds = readNumberList('withdrawnQueueIds');
-    console.log("🔍 Reading joined IDs:", joinedIds);
+    const joinedIds = readNumberList('joinedQueueIds', userId);
+    const withdrawnIds = readNumberList('withdrawnQueueIds', userId);
+    console.log("🔍 Reading joined IDs from localStorage:", joinedIds);
+    console.log("🚫 Reading withdrawn IDs from localStorage:", withdrawnIds);
 
-    const query = supabase
+    // First, get all queues that could potentially be joined
+    const allQueuesResult = await supabase
       .from('draft_queues')
       .select(`
         *,
         stores!inner(name)
-      `)
-      .in('status', ['open', 'firing', 'canceled', 'completed']);
+      `);
 
-    const { data } = joinedIds.length > 0
-      ? await query.or(`id.in.(${joinedIds.join(',')}),label.ilike.%Player Requested%`)
-      : await query.ilike('label', '%Player Requested%');
+    console.log("📊 All queues query result:", allQueuesResult);
 
+    const allQueues = (allQueuesResult.data || []) as ActiveQueue[];
+    console.log("📊 All queues found:", allQueues.length, allQueues.map(q => ({ id: q.id, status: q.status, label: q.label })));
+
+    // Filter to only joined queues
+    const data = allQueues.filter(queue => joinedIds.includes(queue.id));
+    console.log("🔄 After filtering by joined IDs:", data.length, data.map(q => ({ id: q.id, status: q.status })));
+
+    console.log("🔄 Processing queues:", data.length);
     const uniqueQueues = new Map<number, ActiveQueue>();
-    for (const queue of (data || []) as unknown as ActiveQueue[]) {
+    for (const queue of data) {
+      console.log(`🔍 Checking queue ${queue.id}: status=${queue.status}, label=${queue.label}`);
       // Exclude commander pods - only show draft queues
-      if (queue.label && queue.label.toLowerCase().includes('commander')) continue;
+      if (queue.label && queue.label.toLowerCase().includes('commander')) {
+        console.log(`🚫 Skipping commander queue ${queue.id}`);
+        continue;
+      }
       if (!withdrawnIds.includes(queue.id)) {
+        console.log(`✅ Adding queue ${queue.id} to display`);
         uniqueQueues.set(queue.id, queue);
+      } else {
+        console.log(`🚫 Skipping withdrawn queue ${queue.id}`);
       }
     }
 
-    setQueues(Array.from(uniqueQueues.values()));
-  }, []);
+    const finalQueues = Array.from(uniqueQueues.values());
+    console.log("🎯 Final queues to display:", finalQueues.length, finalQueues.map(q => ({ id: q.id, status: q.status })));
+    setQueues(finalQueues);
+  }, [userId]);
 
   const withdrawFromQueue = async (queue: ActiveQueue) => {
     if (!confirm("Withdraw from this queue?")) return;
 
-    writeNumberList('joinedQueueIds', readNumberList('joinedQueueIds').filter((id) => id !== queue.id));
-    writeNumberList('withdrawnQueueIds', [...readNumberList('withdrawnQueueIds'), queue.id]);
+    writeNumberList('joinedQueueIds', readNumberList('joinedQueueIds', userId).filter((id) => id !== queue.id), userId);
+    writeNumberList('withdrawnQueueIds', [...readNumberList('withdrawnQueueIds', userId), queue.id], userId);
     setQueues((current) => current.filter((q) => q.id !== queue.id));
     window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
 
@@ -90,15 +98,41 @@ export default function MyActiveQueues() {
   };
 
   useEffect(() => {
+    const loadUser = async () => {
+      const id = await getCurrentUserId();
+      setUserId(id);
+    };
+
+    loadUser();
     loadMyQueues();
 
     if (typeof window !== 'undefined') {
       window.refreshMyQueues = loadMyQueues;
     }
 
+    // Listen for changes to joined queues
+    const handleJoinedQueuesChanged = () => {
+      console.log("🎯 joinedQueuesChanged event received");
+      loadMyQueues();
+    };
+    window.addEventListener('joinedQueuesChanged', handleJoinedQueuesChanged);
+
+    // Listen for storage changes (in case localStorage is modified externally)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'joinedQueueIds' || e.key === 'withdrawnQueueIds') {
+        console.log("💾 localStorage changed:", e.key, e.oldValue, "->", e.newValue);
+        loadMyQueues();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
     // Re-check every 2 seconds (helps with timing issues)
     const interval = setInterval(loadMyQueues, 2000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('joinedQueuesChanged', handleJoinedQueuesChanged);
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, [loadMyQueues]);
 
   return (
