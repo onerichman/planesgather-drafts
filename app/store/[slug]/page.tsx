@@ -155,21 +155,6 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     }
   };
 
-  const loadStoreData = async () => {
-    // Removed - now handled by checkAuthorization
-  };
-
-  useEffect(() => {
-    // Check auth on mount
-    checkAuthorization();
-
-    // Get user location
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => console.log('Location access denied')
-    );
-  }, [slug]);
-
   const loadQueues = async (storeId: number) => {
     const { data } = await supabase
       .from('draft_queues')
@@ -229,6 +214,21 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   };
 
   useEffect(() => {
+    // Check auth on mount
+    checkAuthorization();
+
+    // Get user location
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => console.log('Location access denied')
+    );
+  }, [slug]);
+
+  const busyPercent = store 
+    ? Math.round(((store.current_players || 0) / (store.max_capacity || 40)) * 100) 
+    : 0;
+
+  useEffect(() => {
     return () => {
       // Cleanup QR scanner on unmount
       if (qrScannerRef.current) {
@@ -237,10 +237,6 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       }
     };
   }, []);
-
-  const busyPercent = store 
-    ? Math.round(((store.current_players || 0) / (store.max_capacity || 40)) * 100) 
-    : 0;
 
   const approveRequest = (req: DraftRequest) => {
     setApprovingRequest(req);

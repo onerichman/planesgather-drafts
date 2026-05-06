@@ -123,6 +123,20 @@ CREATE POLICY "Authenticated users can create draft queues" ON draft_queues
 CREATE POLICY "Queue hosts can update their own draft queues" ON draft_queues
   FOR UPDATE USING (auth.uid() = host_id);
 
+CREATE POLICY "Store owners can update their own draft queues" ON draft_queues
+  FOR UPDATE USING (
+    auth.uid() = host_id OR EXISTS (
+      SELECT 1 FROM stores WHERE stores.id = draft_queues.store_id AND owner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Store owners can delete their own draft queues" ON draft_queues
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM stores WHERE stores.id = draft_queues.store_id AND owner_id = auth.uid()
+    )
+  );
+
 -- Draft request policies
 CREATE POLICY "Store owners can view requests for their store" ON draft_requests
   FOR SELECT USING (
@@ -130,7 +144,7 @@ CREATE POLICY "Store owners can view requests for their store" ON draft_requests
   );
 
 CREATE POLICY "Authenticated users can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (true);
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 CREATE POLICY "Store owners can update draft requests" ON draft_requests
   FOR UPDATE USING (

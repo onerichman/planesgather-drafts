@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId, readNumberList } from '@/utils/storage';
+import { getDistance } from '@/utils/distance';
 
 interface Props {
   onJoin: (queueId: number) => void;
@@ -14,13 +15,14 @@ type ActiveQueue = {
   status: string;
   label: string | null;
   queue_number: number;
-  stores: { name: string };
+  stores: { name: string; lat: number; lng: number };
 };
 
 export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-runtime").JSX.Element {
   const [queues, setQueues] = useState<ActiveQueue[]>([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   const loadQueues = useCallback(async (): Promise<void> => {
     const { data } = await supabase
@@ -31,7 +33,7 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
         status, 
         label, 
         queue_number,
-        stores!inner(name)
+        stores!inner(name, lat, lng)
       `)
       .in('status', ['open', 'firing'])
       .order('created_at', { ascending: false });
@@ -44,6 +46,13 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     const loadUser = async () => setUserId(await getCurrentUserId());
     loadUser();
     loadQueues();
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {
+        console.log('Location access denied for nearby queues');
+      }
+    );
 
     const channel = supabase
       .channel('other-queues')
@@ -72,13 +81,15 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     return <div className="px-8 mt-12 text-zinc-400">Loading active queues...</div>;
   }
 
-  // Strong filter: hide if already joined OR has players OR is a commander queue
-  const filteredQueues = queues.filter(q => {
+  const filteredQueues = queues.filter((q) => {
     const isJoined = joinedQueueIds.includes(q.id);
-    const hasPlayers = q.current_count > 0;
-    // Exclude commander pods - only show draft queues
     const isCommander = q.label && q.label.toLowerCase().includes('commander');
-    return !isJoined && !hasPlayers && !isCommander;
+    if (isJoined || isCommander) return false;
+
+    if (!location) return true;
+
+    const distance = getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng);
+    return distance <= 50;
   });
 
   return (
@@ -100,6 +111,11 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
             <p className="capitalize">Status: <span className="font-medium">{q.status}</span></p>
             {q.label && <p className="text-yellow-400 mt-1">{q.label}</p>}
             <p className="text-sm text-zinc-500">Queue #{q.queue_number}</p>
+            {location && (
+              <p className="text-sm text-zinc-400 mt-2">
+                {Math.round(getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng))} miles • {getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng) <= 1 ? 'At store' : 'En route'}
+              </p>
+            )}
 
             <div className="mt-4 text-center text-green-400 font-bold text-sm border border-green-500/50 py-3 rounded-xl">
               Click here to Join Now

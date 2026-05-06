@@ -1,18 +1,25 @@
 // components/PhoneOptInModal.tsx
 'use client';
 import { useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface Props {
+  userId: string | null;
   onOptIn: () => void;
   onCancel: () => void;
 }
 
-export default function PhoneOptInModal({ onOptIn, onCancel }: Props) {
+export default function PhoneOptInModal({ userId, onOptIn, onCancel }: Props) {
   const [phone, setPhone] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
+    if (!userId) {
+      alert('Please sign in before saving your phone number.');
+      return;
+    }
+
     if (!phone || !agreed) {
       alert("Please enter phone number and agree to terms");
       return;
@@ -20,11 +27,19 @@ export default function PhoneOptInModal({ onOptIn, onCancel }: Props) {
 
     setLoading(true);
 
-    // Temporary bypass - skip actual database update for testing
-    // In real version we would update profiles table
-    console.log("Phone opted in:", phone);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ phone_number: phone.trim(), skip_phone_prompt: true })
+      .eq('id', userId);
+
+    if (error) {
+      setLoading(false);
+      alert(`Error saving phone number: ${error.message}`);
+      return;
+    }
 
     setLoading(false);
+    window.dispatchEvent(new Event('profileUpdated'));
     alert("Phone number saved! You can now join queues.");
     onOptIn();
   };

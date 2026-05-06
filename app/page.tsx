@@ -1,6 +1,7 @@
 // app/page.tsx
 'use client';
 import { useState, useEffect } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import QuickDraftFinder from '@/components/QuickDraftFinder';
 import MyActiveQueues from '@/components/MyActiveQueues';
@@ -17,22 +18,29 @@ export default function Home() {
   const [authModal, setAuthModal] = useState<{
     type: 'player-signup' | 'store-signup' | 'player-login' | 'store-login' | null;
   }>({ type: null });
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [storeLoginPending, setStoreLoginPending] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Handle hydration and localStorage
   useEffect(() => {
     setIsHydrated(true);
-    const savedGameType = localStorage.getItem('selectedGameType');
-    if (savedGameType === 'draft' || savedGameType === 'commander') {
-      setGameType(savedGameType);
+    const navigationEntries = window.performance?.getEntriesByType?.('navigation') || [];
+    const navigationType = navigationEntries[0]?.type || 'navigate';
+
+    if (navigationType === 'reload') {
+      const savedGameType = localStorage.getItem('selectedGameType');
+      if (savedGameType === 'draft' || savedGameType === 'commander') {
+        setGameType(savedGameType);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (gameType) {
       localStorage.setItem('selectedGameType', gameType);
+    } else {
+      localStorage.removeItem('selectedGameType');
     }
   }, [gameType]);
 
@@ -41,11 +49,13 @@ export default function Home() {
     const checkUser = async () => {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       setUser(currentUser);
+      window.dispatchEvent(new Event('authChanged'));
     };
     checkUser();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+      window.dispatchEvent(new Event('authChanged'));
     });
 
     return () => subscription.unsubscribe();
@@ -62,6 +72,8 @@ export default function Home() {
       setGameType(null);
       setAuthModal({ type: null });
       setStoreLoginPending(false);
+      localStorage.removeItem('selectedGameType');
+      window.dispatchEvent(new Event('authChanged'));
       window.location.href = '/';
     }
   };

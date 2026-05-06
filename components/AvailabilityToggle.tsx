@@ -8,6 +8,7 @@ export default function AvailabilityToggle() {
   const [status, setStatus] = useState<'off' | 'looking_now'>('off');
   const [gameType, setGameType] = useState<GameType>(null);
   const [showGameTypeModal, setShowGameTypeModal] = useState(false);
+  const [showLocationWarning, setShowLocationWarning] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const gameTypeLabels: Record<Exclude<GameType, null>, string> = {
@@ -32,22 +33,26 @@ export default function AvailabilityToggle() {
 
   const handleToggle = async () => {
     if (status === 'off') {
-      // Turning ON - show game type selector
-      setShowGameTypeModal(true);
-    } else {
-      // Turning OFF
-      setLoading(true);
-      await supabase.from('profiles').update({ 
-        availability_status: 'off',
-        availability_updated_at: new Date().toISOString(),
-        game_type_preference: null
-      });
-      setStatus('off');
-      setGameType(null);
-      localStorage.removeItem('availabilityStatus');
-      localStorage.removeItem('availabilityGameType');
-      setLoading(false);
+      setShowLocationWarning(true);
+      return;
     }
+
+    setLoading(true);
+    await supabase.from('profiles').update({ 
+      availability_status: 'off',
+      availability_updated_at: new Date().toISOString(),
+      game_type_preference: null
+    });
+    setStatus('off');
+    setGameType(null);
+    localStorage.removeItem('availabilityStatus');
+    localStorage.removeItem('availabilityGameType');
+    setLoading(false);
+  };
+
+  const confirmLocationWarning = () => {
+    setShowLocationWarning(false);
+    setShowGameTypeModal(true);
   };
 
   const selectGameType = async (selected: Exclude<GameType, null>) => {
@@ -83,6 +88,32 @@ export default function AvailabilityToggle() {
           {loading ? '...' : (status === 'off' ? 'OFF' : 'ON')}
         </button>
       </div>
+      <p className="text-xs text-zinc-400 mt-2 text-center max-w-lg mx-auto">
+        When you mark yourself available, your approximate location is shared with nearby players so you can be matched to nearby stores and queues.
+      </p>
+
+      {showLocationWarning && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-3xl p-8 max-w-md w-full text-center">
+            <h2 className="text-3xl font-bold mb-4">Share location to find games</h2>
+            <p className="mb-6 text-zinc-400">
+              Turning this on shares your approximate location with nearby players and queue listings. This helps others see whether you are at the store or en route.
+            </p>
+            <button
+              onClick={confirmLocationWarning}
+              className="w-full py-4 bg-green-600 rounded-2xl font-bold text-lg mb-4"
+            >
+              I understand, continue
+            </button>
+            <button
+              onClick={() => setShowLocationWarning(false)}
+              className="w-full py-4 bg-zinc-700 rounded-2xl font-bold text-lg"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {showGameTypeModal && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">

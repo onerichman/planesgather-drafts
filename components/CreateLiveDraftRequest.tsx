@@ -69,13 +69,29 @@ export default function CreateLiveDraftRequest() {
         setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         loadNearbyStores(pos.coords.latitude, pos.coords.longitude);
       },
-      () => console.log("Location access denied")
+      async () => {
+        console.log("Location access denied");
+        const { data } = await supabase.from('stores').select('*').limit(10);
+        setStores((data || []) as Store[]);
+      }
     );
   }, [loadNearbyStores]);
 
   const createRequest = async () => {
     if (!selectedStoreId || !selectedType) {
       alert("Please select a store and draft type");
+      return;
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    const currentUserId = session?.user?.id || userId;
+    if (sessionError || !currentUserId) {
+      setLoading(false);
+      alert('Please sign in and refresh the page before requesting a draft.');
       return;
     }
 
@@ -95,9 +111,9 @@ export default function CreateLiveDraftRequest() {
     } else {
       if (data?.id) {
         writeNumberList(pendingRequestStorageKey, [
-          ...readNumberList(pendingRequestStorageKey, userId),
+          ...readNumberList(pendingRequestStorageKey, currentUserId),
           data.id,
-        ], userId);
+        ], currentUserId);
       }
 
       alert("✅ Request sent to the store! Waiting for approval...");
@@ -156,21 +172,6 @@ export default function CreateLiveDraftRequest() {
       const queueId = (e as CustomEvent<number>).detail;
       if (!queueId) return;
       addJoinedQueue(queueId);
-
-      const joined = readNumberList('joinedQueueIds', userId);
-      if (!joined.includes(queueId)) {
-        writeNumberList('joinedQueueIds', [...joined, queueId], userId);
-        window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
-        console.log("✅ Auto-added approved queue to localStorage:", queueId);
-      }
-
-      setSuccessMessage("✅ Your draft request was approved! You have been auto-added to the queue.");
-      setTimeout(() => setSuccessMessage(''), 8000);
-
-      if (typeof window !== 'undefined') {
-        window.refreshMyQueues?.();
-        window.refreshOtherQueues?.();
-      }
     };
 
     window.addEventListener('queueApproved', handleQueueApproved);
@@ -179,13 +180,26 @@ export default function CreateLiveDraftRequest() {
   }, [addJoinedQueue, userId]);
 
   useEffect(() => {
-    const loadUser = async () => {
+    const refreshUser = async () => {
       setUserId(await getCurrentUserId());
     };
-    loadUser();
+
+    refreshUser();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
+      refreshUser();
+    });
+
+    window.addEventListener('focus', refreshUser);
+
     checkApprovedRequests();
     const interval = setInterval(checkApprovedRequests, 3000);
-    return () => clearInterval(interval);
+
+    return () => {
+      authListener.subscription.unsubscribe();
+      window.removeEventListener('focus', refreshUser);
+      clearInterval(interval);
+    };
   }, [checkApprovedRequests]);
 
   return (

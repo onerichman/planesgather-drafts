@@ -117,6 +117,14 @@ export default function MyActiveQueues() {
     };
     window.addEventListener('joinedQueuesChanged', handleJoinedQueuesChanged);
 
+    const handleAuthOrProfileUpdate = () => {
+      console.log("🔄 auth/profile update detected, reloading active queues");
+      loadMyQueues();
+    };
+    window.addEventListener('focus', handleAuthOrProfileUpdate);
+    window.addEventListener('profileUpdated', handleAuthOrProfileUpdate);
+    window.addEventListener('authChanged', handleAuthOrProfileUpdate);
+
     // Listen for storage changes (in case localStorage is modified externally)
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'joinedQueueIds' || e.key === 'withdrawnQueueIds') {
@@ -131,6 +139,9 @@ export default function MyActiveQueues() {
     return () => {
       clearInterval(interval);
       window.removeEventListener('joinedQueuesChanged', handleJoinedQueuesChanged);
+      window.removeEventListener('focus', handleAuthOrProfileUpdate);
+      window.removeEventListener('profileUpdated', handleAuthOrProfileUpdate);
+      window.removeEventListener('authChanged', handleAuthOrProfileUpdate);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, [loadMyQueues]);

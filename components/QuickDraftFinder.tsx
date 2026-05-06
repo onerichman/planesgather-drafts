@@ -34,27 +34,56 @@ export default function QuickDraftFinder() {
 
   // Load joined queues from localStorage per current user
   useEffect(() => {
-    const loadUser = async () => {
-      const userResult = await getCurrentUserId();
-      setUserId(userResult);
-      setJoinedQueueIds(readNumberList('joinedQueueIds', userResult));
+    const loadProfileForUser = async (currentUserId: string | null) => {
+      if (!currentUserId) {
+        setUserPhoneNumber(null);
+        setSkipPhonePrompt(false);
+        return;
+      }
 
-      if (userResult) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('phone_number, skip_phone_prompt')
-          .eq('id', userResult)
-          .single();
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('phone_number, skip_phone_prompt')
+        .eq('id', currentUserId)
+        .single();
 
-        setUserPhoneNumber(profile?.phone_number || null);
-        setSkipPhonePrompt(Boolean(profile?.skip_phone_prompt));
+      if (!profileError && profile) {
+        setUserPhoneNumber(profile.phone_number || null);
+        setSkipPhonePrompt(Boolean(profile.skip_phone_prompt));
       }
     };
 
+    const loadUser = async () => {
+      const currentUserId = await getCurrentUserId();
+      setUserId(currentUserId);
+      setJoinedQueueIds(readNumberList('joinedQueueIds', currentUserId));
+      await loadProfileForUser(currentUserId);
+    };
+
+    const handleJoinedQueuesUpdate = () => {
+      setJoinedQueueIds(readNumberList('joinedQueueIds', userId));
+    };
+
+    const handleAuthChange = async () => {
+      await loadUser();
+    };
+
     loadUser();
-    const syncJoinedQueues = () => setJoinedQueueIds(readNumberList('joinedQueueIds', userId));
-    window.addEventListener('joinedQueuesChanged', syncJoinedQueues);
-    return () => window.removeEventListener('joinedQueuesChanged', syncJoinedQueues);
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
+      handleAuthChange();
+    });
+
+    window.addEventListener('joinedQueuesChanged', handleJoinedQueuesUpdate);
+    window.addEventListener('focus', handleAuthChange);
+    window.addEventListener('profileUpdated', handleAuthChange);
+
+    return () => {
+      authListener.subscription.unsubscribe();
+      window.removeEventListener('joinedQueuesChanged', handleJoinedQueuesUpdate);
+      window.removeEventListener('focus', handleAuthChange);
+      window.removeEventListener('profileUpdated', handleAuthChange);
+    };
   }, [userId]);
 
   // Remove the useEffect that saves to localStorage - let other components handle this
@@ -99,7 +128,7 @@ export default function QuickDraftFinder() {
     };
     window.addEventListener('queueApproved', handleQueueApproved);
     return () => window.removeEventListener('queueApproved', handleQueueApproved);
-  }, [joinedQueueIds]);
+  }, [joinedQueueIds, userId]);
 
   const findNearbyDrafts = async () => {
     if (!location) return;
@@ -123,6 +152,11 @@ export default function QuickDraftFinder() {
       if (q.label && q.label.toLowerCase().includes('commander')) return false;
       const dist = getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng);
       return dist <= 100;
+    });
+
+    filtered.sort((a, b) => {
+      return getDistance(location.lat, location.lng, a.stores.lat, a.stores.lng)
+        - getDistance(location.lat, location.lng, b.stores.lat, b.stores.lng);
     });
 
     setQueues(filtered);
@@ -167,6 +201,11 @@ export default function QuickDraftFinder() {
   };
 
   function attemptJoin(queueId: number) {
+    if (!userId) {
+      alert('Please sign in as a player before joining a queue.');
+      return;
+    }
+
     if (joinedQueueIds.includes(queueId)) {
       alert("You are already in this queue!");
       return;
@@ -185,6 +224,7 @@ export default function QuickDraftFinder() {
   const handleOptInSuccess = async () => {
     if (!selectedQueueId) return;
     await joinSelectedQueue(selectedQueueId);
+    setSkipPhonePrompt(true);
   };
 
   const closeSuccess = () => {
@@ -220,12 +260,15 @@ export default function QuickDraftFinder() {
             </div>
             
             {queues.map((q) => {
-              const alreadyJoined = joinedQueueIds.includes(q.id) || q.current_count > 0;
+              const alreadyJoined = joinedQueueIds.includes(q.id);
+              const distance = location ? Math.round(getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng)) : null;
+              const presenceLabel = distance !== null ? (distance <= 1 ? 'At store' : 'En route') : 'Nearby';
+              const full = q.current_count >= 8;
               return (
                 <div key={q.id} className="bg-zinc-800 p-6 rounded-2xl mb-6">
                   <h3 className="text-xl font-semibold">{q.stores.name}</h3>
                   <p className="text-sm opacity-70">
-                    Queue #{q.queue_number} • {location && Math.round(getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng))} miles
+                    Queue #{q.queue_number} • {distance !== null ? `${distance} miles` : 'Distance unavailable'} • {presenceLabel}
                   </p>
                   <div className="text-5xl font-bold my-4 text-green-400">
                     {q.current_count} / 8
@@ -234,12 +277,12 @@ export default function QuickDraftFinder() {
 
                   <button
                     onClick={() => attemptJoin(q.id)}
-                    disabled={alreadyJoined}
+                    disabled={alreadyJoined || full}
                     className={`w-full py-5 rounded-xl font-bold text-lg transition ${
-                      alreadyJoined ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                      alreadyJoined || full ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
                     }`}
                   >
-                    {alreadyJoined ? '✅ Already Joined' : 'Join Queue'}
+                    {alreadyJoined ? '✅ Already Joined' : full ? 'Full' : 'Join Queue'}
                   </button>
                 </div>
               );
@@ -248,7 +291,7 @@ export default function QuickDraftFinder() {
         </div>
       )}
 
-      {showOptIn && <PhoneOptInModal onOptIn={handleOptInSuccess} onCancel={() => setShowOptIn(false)} />}
+      {showOptIn && <PhoneOptInModal userId={userId} onOptIn={handleOptInSuccess} onCancel={() => setShowOptIn(false)} />}
 
       {showSuccess && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
