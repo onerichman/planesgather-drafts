@@ -542,11 +542,11 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-6">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-4xl font-bold">{store.name}</h1>
-          <p className="text-zinc-400 mt-1">Dashboard</p>
-        </div>
+     <div className="flex justify-between items-center mb-8">
+  <div>
+    <h1 className="text-4xl font-bold">{store?.name || 'Store Dashboard'}</h1>
+    <p className="text-zinc-400 mt-1">Dashboard</p>
+  </div>
         <button
           onClick={() => window.location.href = '/'}
           className="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-xl font-medium"
@@ -555,7 +555,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         </button>
       </div>
 
-      {userLocation && store.lat && store.lng && (
+      {userLocation && store?.lat && store?.lng && (
         <p className="text-lg opacity-80 mb-6">
           📍 {Math.round(getDistance(userLocation.lat, userLocation.lng, store.lat, store.lng))} miles away
         </p>
@@ -941,8 +941,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       )}
 
       <CreateDraftQueue 
-        storeId={store.id} 
-        onCreated={() => loadQueues(store.id)} 
+  storeId={store!.id} 
+  onCreated={() => loadQueues(store!.id)} 
       />
     </div>
   );
