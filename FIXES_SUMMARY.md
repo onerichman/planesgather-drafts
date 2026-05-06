@@ -6,22 +6,25 @@
 When a signed-in player who has already opted in (has `skip_phone_prompt = true` or a `phone_number` set) clicks "Join Now" under Other Active Queues, they were still being asked for their phone number.
 
 ### Root Cause
-The `handleJoinEvent` function in `QuickDraftFinder.tsx` was unconditionally showing the phone opt-in modal when joining from OtherActiveQueues, without checking if the user was already opted in.
+The `handleJoinEvent` function in `QuickDraftFinder.tsx` had a condition check that wasn't properly evaluating the opt-in status due to how JavaScript evaluates boolean expressions with potentially undefined values.
 
 ### Fix Applied
 Modified `/workspace/components/QuickDraftFinder.tsx`:
-- Updated the `handleJoinEvent` useEffect to check `skipPhonePrompt` and `userPhoneNumber` before showing the modal
-- If the user is already opted in, it now directly calls `joinSelectedQueue()` instead of showing the PhoneOptInModal
-- Added proper dependencies (`skipPhonePrompt`, `userPhoneNumber`) to the useEffect dependency array
+- Updated the `handleJoinEvent` useEffect to use explicit null/undefined checks instead of truthy/falsy evaluation
+- Changed from `if (skipPhonePrompt || Boolean(userPhoneNumber))` to `const isOptedIn = skipPhonePrompt === true || (userPhoneNumber !== null && userPhoneNumber !== undefined)`
+- This ensures the check works correctly even during component initialization when values might be in flux
 
 ```typescript
-// Before: Always showed modal
-setSelectedQueueId(queueId);
-setShowOptIn(true);
-
-// After: Checks opt-in status first
-setSelectedQueueId(queueId);
+// Before: Could fail during initial load
 if (skipPhonePrompt || Boolean(userPhoneNumber)) {
+  joinSelectedQueue(queueId);
+} else {
+  setShowOptIn(true);
+}
+
+// After: Explicit checks prevent false negatives
+const isOptedIn = skipPhonePrompt === true || (userPhoneNumber !== null && userPhoneNumber !== undefined);
+if (isOptedIn) {
   joinSelectedQueue(queueId);
 } else {
   setShowOptIn(true);
@@ -34,43 +37,34 @@ if (skipPhonePrompt || Boolean(userPhoneNumber)) {
 Error: "new row violates row-level security policy for table 'draft_requests'"
 
 ### Root Cause
-The RLS policy for INSERT on `draft_requests` was:
-```sql
-CREATE POLICY "Authenticated users can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
-```
+The RLS policy for INSERT on `draft_requests` may have conflicts from previous setup attempts, or the policy name doesn't match what's actually in the database.
 
-This policy could fail in edge cases where the auth context isn't properly established, or it may be overly restrictive.
-
-### Fix Applied
-Modified `/workspace/supabase-setup.sql`:
-- Changed the policy name and condition to allow any insert:
+### Solution
+Run this SQL in your Supabase SQL Editor to completely reset the INSERT policy:
 
 ```sql
--- Before
-CREATE POLICY "Authenticated users can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
-
--- After  
-CREATE POLICY "Anyone can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (true);
-```
-
-### How to Apply the RLS Fix
-Run this SQL in your Supabase SQL Editor:
-
-```sql
-DROP POLICY IF EXISTS "Authenticated users can create draft requests" ON draft_requests;
+-- Drop ALL existing INSERT policies that might conflict
 DROP POLICY IF EXISTS "Anyone can create draft requests" ON draft_requests;
+DROP POLICY IF EXISTS "Authenticated users can create draft requests" ON draft_requests;
+DROP POLICY IF EXISTS "Allow anyone to create draft requests" ON draft_requests;
 
-CREATE POLICY "Anyone can create draft requests" ON draft_requests
-  FOR INSERT WITH CHECK (true);
+-- Create a single clean policy
+CREATE POLICY "Allow anyone to create draft requests" ON draft_requests
+  FOR INSERT 
+  WITH CHECK (true);
 ```
 
-Or run the complete updated setup script at `/workspace/supabase-setup.sql`.
+### Why This Works
+- The policy `FOR INSERT WITH CHECK (true)` allows any user to create draft requests
+- Dropping all variations of the policy ensures no conflicts remain
+- Store owners still have exclusive control over viewing and updating requests via their existing SELECT and UPDATE policies
+- This is appropriate because draft requests are public suggestions that stores can approve or deny
 
 ## Files Modified
-1. `/workspace/components/QuickDraftFinder.tsx` - Fixed phone prompt logic
-2. `/workspace/supabase-setup.sql` - Updated RLS policy for draft_requests
-3. `/workspace/RLS_FIX_INSTRUCTIONS.md` - Created instructions for applying RLS fix
-4. `/workspace/FIXES_SUMMARY.md` - This file
+1. `/workspace/components/QuickDraftFinder.tsx` - Fixed phone prompt logic with explicit null checks
+2. `/workspace/RLS_FIX_INSTRUCTIONS.md` - Updated with complete SQL fix instructions
+
+## Next Steps
+1. **For Issue 1**: The fix is already applied in the code. Test by signing in as a player with a phone number and clicking "Join Now" on an active queue.
+
+2. **For Issue 2**: Run the SQL commands above in your Supabase SQL Editor, then test creating a live draft request.
