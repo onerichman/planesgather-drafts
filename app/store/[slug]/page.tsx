@@ -42,6 +42,13 @@ type DraftRequest = {
   notes: string | null;
 };
 
+type QueueParticipant = {
+  user_id: string;
+  email: string;
+  status: 'enroute' | 'at_store' | 'withdrawn';
+  joined_at: string;
+};
+
 type RealtimeDraftRequestPayload = {
   eventType: string;
   new?: Partial<DraftRequest> & { status?: string };
@@ -59,6 +66,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [draftQueues, setDraftQueues] = useState<DraftQueue[]>([]);
   const [commanderQueues, setCommanderQueues] = useState<CommanderQueue[]>([]);
   const [pendingRequests, setPendingRequests] = useState<DraftRequest[]>([]);
+  const [queueParticipants, setQueueParticipants] = useState<Record<number, QueueParticipant[]>>({});
   const [requestNotice, setRequestNotice] = useState('');
   const [storeError, setStoreError] = useState('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -83,6 +91,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const videoRef = useRef<HTMLVideoElement>(null);
   const qrScannerRef = useRef<QrScanner | null>(null);
   const pendingRequestIdsRef = useRef<Set<number>>(new Set());
+  const channelRef = useRef<any>(null);
+  const isSubscribedRef = useRef<boolean>(false);
 
   const checkAuthorization = async () => {
     try {
@@ -155,6 +165,55 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     }
   };
 
+  const loadQueueParticipants = async (queueIds: number[]) => {
+    if (queueIds.length === 0) return;
+
+    console.log('Loading participants for queue IDs:', queueIds);
+
+    try {
+      // Use direct query instead of RPC to avoid function issues
+      const { data, error } = await supabase
+        .from('queue_participants')
+        .select(`
+          queue_id,
+          user_id,
+          status,
+          joined_at
+        `)
+        .in('queue_id', queueIds)
+        .neq('status', 'withdrawn')
+        .order('joined_at', { ascending: true });
+
+      if (error) {
+        console.error('Error loading participants:', error);
+        return;
+      }
+
+      const participantsByQueue: Record<number, QueueParticipant[]> = {};
+      
+      // Group participants by queue_id
+      (data || []).forEach((participant: any) => {
+        const queueId = participant.queue_id;
+        if (!participantsByQueue[queueId]) {
+          participantsByQueue[queueId] = [];
+        }
+        
+        participantsByQueue[queueId].push({
+          user_id: participant.user_id,
+          email: `User-${participant.user_id.slice(0, 8)}`, // Show user ID as identifier
+          status: participant.status,
+          joined_at: participant.joined_at
+        });
+      });
+
+      console.log('Participants by queue:', participantsByQueue);
+      setQueueParticipants(participantsByQueue);
+
+    } catch (error) {
+      console.error('Unexpected error loading participants:', error);
+    }
+  };
+
   const loadQueues = async (storeId: number) => {
     const { data } = await supabase
       .from('draft_queues')
@@ -168,6 +227,12 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     
     setDraftQueues(drafts as DraftQueue[]);
     setCommanderQueues(commanders as CommanderQueue[]);
+    
+    // Load participants after queues are loaded
+    const allQueueIds = [...drafts, ...commanders].map(q => q.id);
+    if (allQueueIds.length > 0) {
+      await loadQueueParticipants(allQueueIds);
+    }
   };
 
   const loadPendingRequests = async (storeId: number, options: { notifyNew?: boolean } = {}) => {
@@ -193,10 +258,32 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   };
 
   const subscribeToChanges = (storeId: number) => {
-    supabase.channel(`store-data-${storeId}`)
+    // Prevent multiple subscriptions
+    if (isSubscribedRef.current) {
+      return;
+    }
+    
+    // Clean up existing subscription if any
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    
+    const channel = supabase.channel(`store-data-${storeId}`);
+    
+    channel
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'draft_queues', filter: `store_id=eq.${storeId}` }, 
         () => loadQueues(storeId)
+      )
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'queue_participants', filter: `store_id=eq.${storeId}` }, 
+        () => {
+          const allQueueIds = [...draftQueues, ...commanderQueues].map(q => q.id);
+          if (allQueueIds.length > 0) {
+            loadQueueParticipants(allQueueIds);
+          }
+        }
       )
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'draft_requests', filter: `store_id=eq.${storeId}` }, 
@@ -210,7 +297,36 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to store updates');
+          isSubscribedRef.current = true;
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Failed to subscribe to store updates');
+          isSubscribedRef.current = false;
+        }
+      });
+      
+    channelRef.current = channel;
+  };
+
+  const updateParticipantStatus = async (userId: string, queueId: number, newStatus: 'enroute' | 'at_store') => {
+    if (!store) return;
+    
+    const { error } = await supabase
+      .from('queue_participants')
+      .update({ status: newStatus })
+      .eq('queue_id', queueId)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error updating participant status:', error);
+      alert('Error updating player status. Please try again.');
+      return;
+    }
+
+    // Reload participants for this queue
+    await loadQueueParticipants([queueId]);
   };
 
   useEffect(() => {
@@ -234,6 +350,12 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       if (qrScannerRef.current) {
         qrScannerRef.current.stop();
         qrScannerRef.current.destroy();
+      }
+      // Cleanup Supabase subscription
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+        isSubscribedRef.current = false;
       }
     };
   }, []);
@@ -808,6 +930,35 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
               </div>
             </div>
 
+            {queueParticipants[q.id] && queueParticipants[q.id].length > 0 && (
+              <div className="mt-4 p-4 bg-zinc-900 rounded-xl">
+                <h4 className="text-sm font-semibold mb-3 text-zinc-400">Players in Queue:</h4>
+                <div className="flex flex-wrap gap-2">
+                  {queueParticipants[q.id].map((participant) => {
+                    const name = participant.email.split('@')[0];
+                    const statusText = participant.status === 'at_store' ? 'At Store' : 'Enroute';
+                    const statusColor = participant.status === 'at_store' ? 'text-green-400' : 'text-yellow-400';
+                    
+                    return (
+                      <button
+                        key={participant.user_id}
+                        onClick={() => updateParticipantStatus(
+                          participant.user_id, 
+                          q.id, 
+                          participant.status === 'enroute' ? 'at_store' : 'enroute'
+                        )}
+                        className="bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer"
+                        title={`Click to change status (currently: ${statusText})`}
+                      >
+                        <span className="font-medium">{name}</span>
+                        <span className={`ml-2 ${statusColor}`}>({statusText})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {q.firing_code && (
               <div className="p-4 bg-black rounded-xl text-2xl font-mono text-center">
                 Companion Code: {q.firing_code}
@@ -846,6 +997,35 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                 </button>
               </div>
             </div>
+
+            {queueParticipants[q.id] && queueParticipants[q.id].length > 0 && (
+              <div className="mt-4 p-4 bg-zinc-900 rounded-xl">
+                <h4 className="text-sm font-semibold mb-3 text-zinc-400">Players in Queue:</h4>
+                <div className="flex flex-wrap gap-2">
+                  {queueParticipants[q.id].map((participant) => {
+                    const name = participant.email.split('@')[0];
+                    const statusText = participant.status === 'at_store' ? 'At Store' : 'Enroute';
+                    const statusColor = participant.status === 'at_store' ? 'text-green-400' : 'text-yellow-400';
+                    
+                    return (
+                      <button
+                        key={participant.user_id}
+                        onClick={() => updateParticipantStatus(
+                          participant.user_id, 
+                          q.id, 
+                          participant.status === 'enroute' ? 'at_store' : 'enroute'
+                        )}
+                        className="bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer"
+                        title={`Click to change status (currently: ${statusText})`}
+                      >
+                        <span className="font-medium">{name}</span>
+                        <span className={`ml-2 ${statusColor}`}>({statusText})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {q.firing_code && (
               <div className="p-4 bg-black rounded-xl text-2xl font-mono text-center">

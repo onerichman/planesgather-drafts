@@ -23,6 +23,82 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [participantStatuses, setParticipantStatuses] = useState<Record<number, { status: 'enroute' | 'at_store'; joined_at: string }>>({});
+  const [allParticipants, setAllParticipants] = useState<Record<number, Array<{ status: 'enroute' | 'at_store'; joined_at: string; user_id: string }>>>({});
+
+  // Load all participants for queues
+  const loadAllParticipants = async () => {
+    console.log('OtherActiveQueues: Loading all participants for queues');
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at, user_id')
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('OtherActiveQueues: Error loading participants:', error);
+      return;
+    }
+
+    console.log('OtherActiveQueues: Found all participants:', participants);
+
+    if (participants) {
+      const participantsByQueue: Record<number, Array<{ status: 'enroute' | 'at_store'; joined_at: string; user_id: string }>> = {};
+      participants.forEach((p: any) => {
+        if (!participantsByQueue[p.queue_id]) {
+          participantsByQueue[p.queue_id] = [];
+        }
+        participantsByQueue[p.queue_id].push({
+          status: p.status,
+          joined_at: p.joined_at,
+          user_id: p.user_id
+        });
+      });
+      console.log('OtherActiveQueues: Final participants by queue:', participantsByQueue);
+      setAllParticipants(participantsByQueue);
+    } else {
+      console.log('OtherActiveQueues: No participants found');
+    }
+  };
+
+  // Load participant status for joined queues (current user only)
+  const loadParticipantStatuses = async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.log('OtherActiveQueues: No user ID for participant status loading');
+      return;
+    }
+
+    console.log('OtherActiveQueues: Loading participant status for user:', userId);
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('OtherActiveQueues: Error loading participant status:', error);
+      return;
+    }
+
+    console.log('OtherActiveQueues: Found participants:', participants);
+
+    if (participants) {
+      const statuses: Record<number, { status: 'enroute' | 'at_store'; joined_at: string }> = {};
+      participants.forEach((p: any) => {
+        console.log('OtherActiveQueues: Setting status for queue', p.queue_id, ':', p.status);
+        statuses[p.queue_id] = {
+          status: p.status,
+          joined_at: p.joined_at
+        };
+      });
+      console.log('OtherActiveQueues: Final statuses:', statuses);
+      setParticipantStatuses(statuses);
+    } else {
+      console.log('OtherActiveQueues: No participants found for user');
+    }
+  };
 
   const loadQueues = useCallback(async (): Promise<void> => {
     const { data } = await supabase
@@ -43,31 +119,18 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
   }, []);
 
   useEffect(() => {
-    const loadUser = async () => setUserId(await getCurrentUserId());
+    const loadUser = async () => {
+      const id = await getCurrentUserId();
+      setUserId(id);
+    };
     loadUser();
     loadQueues();
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {
-        console.log('Location access denied for nearby queues');
-      }
-    );
-
-    const channel = supabase
-      .channel('other-queues')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'draft_queues' },
-        loadQueues
-      )
-      .subscribe();
-
-    if (typeof window !== 'undefined') {
-      window.refreshOtherQueues = loadQueues;
-    }
+    loadAllParticipants();
+    loadParticipantStatuses();
+    const interval = setInterval(loadQueues, 2500);
 
     return () => {
-      supabase.removeChannel(channel);
+      // No channel to remove
     };
   }, [loadQueues]);
 
@@ -111,6 +174,45 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
             <p className="capitalize">Status: <span className="font-medium">{q.status}</span></p>
             {q.label && <p className="text-yellow-400 mt-1">{q.label}</p>}
             <p className="text-sm text-zinc-500">Queue #{q.queue_number}</p>
+            
+            {allParticipants[q.id] && allParticipants[q.id].length > 0 && (
+              <div className="mb-3 p-3 bg-zinc-800 rounded-lg text-sm">
+                <p className="text-zinc-400 mb-1">Players in this queue ({allParticipants[q.id].length}/8):</p>
+                {allParticipants[q.id].map((participant, index) => (
+                  <div key={index} className="flex items-center justify-between py-1 border-b border-zinc-700 last:border-0">
+                    <span className="text-sm">
+                      User-{participant.user_id.slice(0, 8)}
+                    </span>
+                    <span className="text-sm font-medium">
+                      {participant.status === 'at_store' ? (
+                        <span className="text-green-400">🟢 At Store</span>
+                      ) : (
+                        <span className="text-yellow-400">🟡 Enroute</span>
+                      )}
+                    </span>
+                    <span className="text-xs text-zinc-500">
+                      {new Date(participant.joined_at).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {participantStatuses[q.id] && (
+              <div className="mb-3 p-3 bg-zinc-800 rounded-lg text-sm">
+                <p className="text-zinc-400 mb-1">Your Status:</p>
+                <p className="font-medium">
+                  {participantStatuses[q.id].status === 'at_store' ? (
+                    <span className="text-green-400">🟢 At Store</span>
+                  ) : (
+                    <span className="text-yellow-400">🟡 Enroute</span>
+                  )}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  Joined: {new Date(participantStatuses[q.id].joined_at).toLocaleTimeString()}
+                </p>
+              </div>
+            )}
             {location && (
               <p className="text-sm text-zinc-400 mt-2">
                 {Math.round(getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng))} miles • {getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng) <= 1 ? 'At store' : 'En route'}

@@ -1,0 +1,132 @@
+
+> planesgather-drafts@0.1.0 dev
+> next dev --hostname 127.0.0.1 --port 3000
+
+▲ Next.js 16.2.4 (Turbopack)
+- Local:         http://127.0.0.1:3000
+- Network:       http://127.0.0.1:3000
+- Environments: .env.local
+✓ Ready in 788ms
+
+ GET / 200 in 1136ms (next.js: 884ms, application-code: 251ms)
+ GET / 200 in 46ms (next.js: 8ms, application-code: 38ms)
+ GET /store/test-store 200 in 958ms (next.js: 855ms, application-code: 103ms)
+ GET / 200 in 59ms (next.js: 7ms, application-code: 52ms)
+✓ Compiled in 4.9s
+ GET / 200 in 816ms (next.js: 294ms, application-code: 521ms)
+ GET /store/test-store 200 in 163ms (next.js: 66ms, application-code: 97ms)
+✓ Compiled in 1264ms
+ GET / 200 in 364ms (next.js: 137ms, application-code: 227ms)
+ GET /store/test-store 200 in 181ms (next.js: 20ms, application-code: 161ms)
+✓ Compiled in 114ms
+ GET / 200 in 404ms (next.js: 170ms, application-code: 233ms)
+ GET /store/test-store 200 in 168ms (next.js: 60ms, application-code: 108ms)
+✓ Compiled in 95ms
+ GET / 200 in 333ms (next.js: 181ms, application-code: 152ms)
+ GET /store/test-store 200 in 195ms (next.js: 74ms, application-code: 121ms)
+✓ Compiled in 241ms
+ GET / 200 in 304ms (next.js: 107ms, application-code: 197ms)
+ GET /store/test-store 200 in 319ms (next.js: 200ms, application-code: 120ms)
+ GET / 200 in 386ms (next.js: 75ms, application-code: 311ms)
+ GET /store/test-store 200 in 653ms (next.js: 413ms, application-code: 240ms)
+ GET / 200 in 58ms (next.js: 7ms, application-code: 51ms)
+✓ Compiled in 390ms
+ GET / 200 in 284ms (next.js: 179ms, application-code: 105ms)
+ GET /store/test-store 200 in 280ms (next.js: 166ms, application-code: 114ms)
+ GET / 200 in 276ms (next.js: 41ms, application-code: 235ms)
+✓ Compiled in 1935ms
+ GET / 200 in 286ms (next.js: 106ms, application-code: 181ms)
+ GET /store/test-store 200 in 145ms (next.js: 94ms, application-code: 51ms)
+ GET / 200 in 166ms (next.js: 5ms, application-code: 161ms)
+ GET / 200 in 55ms (next.js: 11ms, application-code: 45ms)
+ GET / 200 in 39ms (next.js: 4ms, application-code: 35ms)
+✓ Compiled in 680ms
+ GET / 200 in 527ms (next.js: 260ms, application-code: 268ms)
+ GET /store/test-store 200 in 401ms (next.js: 159ms, application-code: 241ms)
+✓ Compiled in 494ms
+ GET / 200 in 800ms (next.js: 360ms, application-code: 440ms)
+ GET /store/test-store 200 in 260ms (next.js: 123ms, application-code: 138ms)
+ GET / 200 in 228ms (next.js: 16ms, application-code: 212ms)
+ GET /store/test-store 200 in 91ms (next.js: 26ms, application-code: 65ms)
+✓ Compiled in 1336ms
+ GET / 200 in 587ms (next.js: 127ms, application-code: 459ms)
+ GET /store/test-store 200 in 344ms (next.js: 254ms, application-code: 90ms)
+ GET /store/test-store 200 in 210ms (next.js: 14ms, application-code: 196ms)
+ GET / 200 in 63ms (next.js: 7ms, application-code: 55ms)
+ GET /store/test-store 200 in 72ms (next.js: 22ms, application-code: 50ms)
+✓ Compiled in 187ms
+ GET / 200 in 330ms (next.js: 124ms, application-code: 206ms)
+ GET /store/test-store 200 in 677ms (next.js: 589ms, application-code: 88ms)
+✓ Compiled in 1936ms
+ GET / 200 in 362ms (next.js: 133ms, application-code: 229ms)
+ GET /store/test-store 200 in 247ms (next.js: 162ms, application-code: 85ms)
+✓ Compiled in 85ms
+ GET / 200 in 379ms (next.js: 111ms, application-code: 268ms)
+ GET /store/test-store 200 in 187ms (next.js: 120ms, application-code: 67ms)
+✓ Compiled in 129ms
+ GET / 200 in 186ms (next.js: 50ms, application-code: 137ms)
+ GET /store/test-store 200 in 114ms (next.js: 65ms, application-code: 50ms)
+✓ Compiled in 99ms
+ GET / 200 in 692ms (next.js: 139ms, application-code: 552ms)
+ GET /store/test-store 200 in 356ms (next.js: 211ms, application-code: 145ms)
+✓ Compiled in 65ms
+ GET / 200 in 855ms (next.js: 129ms, application-code: 726ms)
+ GET /store/test-store 200 in 637ms (next.js: 211ms, application-code: 426ms)
+✓ Compiled in 132ms
+ GET / 200 in 266ms (next.js: 138ms, application-code: 128ms)
+ GET /store/test-store 200 in 266ms (next.js: 158ms, application-code: 108ms)
+✓ Compiled in 66ms
+ GET / 200 in 1075ms (next.js: 287ms, application-code: 788ms)
+ GET /store/test-store 200 in 580ms (next.js: 350ms, application-code: 230ms)
+✓ Compiled in 187ms
+ GET / 200 in 449ms (next.js: 183ms, application-code: 266ms)
+ GET /store/test-store 200 in 446ms (next.js: 327ms, application-code: 119ms)
+✓ Compiled in 48ms
+ GET / 200 in 273ms (next.js: 59ms, application-code: 213ms)
+ GET /store/test-store 200 in 156ms (next.js: 88ms, application-code: 68ms)
+✓ Compiled in 79ms
+ GET / 200 in 354ms (next.js: 56ms, application-code: 298ms)
+ GET /store/test-store 200 in 236ms (next.js: 157ms, application-code: 79ms)
+ GET / 200 in 1117ms (next.js: 189ms, application-code: 927ms)
+ GET /store/test-store 200 in 111ms (next.js: 33ms, application-code: 79ms)
+✓ Compiled in 715ms
+ GET / 200 in 1150ms (next.js: 342ms, application-code: 808ms)
+ GET /store/test-store 200 in 603ms (next.js: 480ms, application-code: 124ms)
+✓ Compiled in 2.8s
+ GET / 200 in 1988ms (next.js: 632ms, application-code: 1356ms)
+ GET /store/test-store 200 in 733ms (next.js: 598ms, application-code: 135ms)
+✓ Compiled in 2.4s
+ GET / 200 in 2.6s (next.js: 615ms, application-code: 1955ms)
+ GET /store/test-store 200 in 1310ms (next.js: 1200ms, application-code: 110ms)
+ GET / 200 in 999ms (next.js: 411ms, application-code: 588ms)
+ GET /store/test-store 200 in 392ms (next.js: 121ms, application-code: 271ms)
+✓ Compiled in 1431ms
+ GET /store/test-store 200 in 735ms (next.js: 287ms, application-code: 448ms)
+ GET / 200 in 324ms (next.js: 144ms, application-code: 180ms)
+ GET /store/test-store 200 in 92ms (next.js: 12ms, application-code: 80ms)
+ GET /store/test-store 200 in 290ms (next.js: 24ms, application-code: 266ms)
+ GET / 200 in 98ms (next.js: 16ms, application-code: 82ms)
+ GET / 200 in 38ms (next.js: 4ms, application-code: 34ms)
+ GET / 200 in 47ms (next.js: 5ms, application-code: 42ms)
+ GET / 200 in 44ms (next.js: 5ms, application-code: 40ms)
+✓ Compiled in 508ms
+ GET / 200 in 3.0s (next.js: 616ms, application-code: 2.4s)
+ GET / 200 in 3.0s (next.js: 1064ms, application-code: 1921ms)
+ GET / 200 in 1558ms (next.js: 26ms, application-code: 1533ms)
+ GET /store/test-store 200 in 1367ms (next.js: 1202ms, application-code: 165ms)
+ GET / 200 in 247ms (next.js: 20ms, application-code: 227ms)
+ GET / 200 in 864ms (next.js: 178ms, application-code: 685ms)
+✓ Compiled in 2s
+✓ Compiled in 1866ms
+ GET / 200 in 1918ms (next.js: 1610ms, application-code: 308ms)
+ GET / 200 in 379ms (next.js: 28ms, application-code: 351ms)
+ GET / 200 in 165ms (next.js: 14ms, application-code: 151ms)
+ GET / 200 in 43ms (next.js: 8ms, application-code: 36ms)
+ GET / 200 in 266ms (next.js: 110ms, application-code: 156ms)
+ GET / 200 in 60ms (next.js: 13ms, application-code: 47ms)
+ GET / 200 in 70ms (next.js: 10ms, application-code: 60ms)
+ GET / 200 in 39ms (next.js: 4ms, application-code: 35ms)
+ GET / 200 in 736ms (next.js: 14ms, application-code: 722ms)
+ GET / 200 in 65ms (next.js: 13ms, application-code: 52ms)
+ GET / 200 in 51ms (next.js: 4ms, application-code: 47ms)
+[?25h

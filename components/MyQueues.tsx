@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getCurrentUserId } from '@/utils/storage';
 
 type Queue = {
   id: number;
@@ -12,9 +13,54 @@ type Queue = {
   stores: { name: string };
 };
 
+type ParticipantStatus = {
+  status: 'enroute' | 'at_store';
+  joined_at: string;
+};
+
 export default function MyQueues() {
   const [queues, setQueues] = useState<Queue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [participantStatuses, setParticipantStatuses] = useState<Record<number, ParticipantStatus>>({});
+
+  // Load participant status for each queue
+  const loadParticipantStatuses = async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.log('No user ID found for participant status loading');
+      return;
+    }
+
+    console.log('Loading participant status for user:', userId);
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('Error loading participant status:', error);
+      return;
+    }
+
+    console.log('Found participants:', participants);
+
+    if (participants) {
+      const statuses: Record<number, ParticipantStatus> = {};
+      participants.forEach((p: any) => {
+        console.log('Setting status for queue', p.queue_id, ':', p.status);
+        statuses[p.queue_id] = {
+          status: p.status,
+          joined_at: p.joined_at
+        };
+      });
+      console.log('Final statuses:', statuses);
+      setParticipantStatuses(statuses);
+    } else {
+      console.log('No participants found for user');
+    }
+  };
 
   const loadQueues = async () => {
     const { data, error } = await supabase
@@ -56,6 +102,13 @@ export default function MyQueues() {
     };
   }, []);
 
+  // Load participant status when component mounts
+  useEffect(() => {
+    if (queues.length > 0) {
+      loadParticipantStatuses();
+    }
+  }, [queues]);
+
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     alert(`Companion code ${code} copied to clipboard!`);
@@ -86,6 +139,22 @@ export default function MyQueues() {
 
             {q.label && (
               <p className="text-yellow-400 font-medium mb-4">{q.label}</p>
+            )}
+
+            {participantStatuses[q.id] && (
+              <div className="mb-4 p-3 bg-zinc-800 rounded-lg">
+                <p className="text-sm text-zinc-400 mb-2">Your Status:</p>
+                <p className="text-lg font-medium">
+                  {participantStatuses[q.id].status === 'at_store' ? (
+                    <span className="text-green-400">🟢 At Store</span>
+                  ) : (
+                    <span className="text-yellow-400">🟡 Enroute</span>
+                  )}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  Joined: {new Date(participantStatuses[q.id].joined_at).toLocaleTimeString()}
+                </p>
+              </div>
             )}
 
             {q.status === 'firing' && q.firing_code && (

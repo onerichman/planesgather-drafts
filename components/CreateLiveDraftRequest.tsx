@@ -78,51 +78,51 @@ export default function CreateLiveDraftRequest() {
   }, [loadNearbyStores]);
 
   const createRequest = async () => {
-    if (!selectedStoreId || !selectedType) {
-      alert("Please select a store and draft type");
-      return;
-    }
+  if (!selectedStoreId || !selectedType) {
+    alert("Please select a store and draft type");
+    return;
+  }
 
-    const {
-      data: { session },
-      error: sessionError,
-    } = await supabase.auth.getSession();
+  setLoading(true);
 
-    const currentUserId = session?.user?.id || userId;
-    if (sessionError || !currentUserId) {
-      setLoading(false);
-      alert('Please sign in and refresh the page before requesting a draft.');
-      return;
-    }
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
 
-    setLoading(true);
-
-    const { data, error } = await supabase.from('draft_requests').insert({
-      store_id: selectedStoreId,
-      label: selectedType,
-      notes: notes.trim() || null,
-      status: 'pending'
-    }).select('id').single();
-
+  if (sessionError || !session?.user?.id) {
     setLoading(false);
+    alert('Please sign in and refresh the page before requesting a draft.');
+    return;
+  }
 
-    if (error) {
-      alert("Error: " + error.message);
-    } else {
-      if (data?.id) {
-        writeNumberList(pendingRequestStorageKey, [
-          ...readNumberList(pendingRequestStorageKey, currentUserId),
-          data.id,
-        ], currentUserId);
-      }
+  const { data, error } = await supabase.from('draft_requests').insert({
+    store_id: selectedStoreId,
+    label: selectedType,
+    notes: notes.trim() || null,
+    status: 'pending',
+    requester_id: session.user.id
+  }).select('id').single();
 
-      alert("✅ Request sent to the store! Waiting for approval...");
-      setShowModal(false);
-      setSelectedStoreId(null);
-      setSelectedType('');
-      setNotes('');
+  setLoading(false);
+
+  if (error) {
+    alert("Error: " + error.message);
+  } else {
+    if (data?.id) {
+      writeNumberList(pendingRequestStorageKey, [
+        ...readNumberList(pendingRequestStorageKey, session.user.id),
+        data.id,
+      ], session.user.id);
     }
-  };
+
+    alert("✅ Request sent to the store! Waiting for approval...");
+    setShowModal(false);
+    setSelectedStoreId(null);
+    setSelectedType('');
+    setNotes('');
+  }
+};
 
   const addJoinedQueue = useCallback((queueId: number) => {
     const joined = readNumberList('joinedQueueIds', userId);

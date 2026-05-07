@@ -25,8 +25,84 @@ export default function MyActiveQueues() {
   const [queues, setQueues] = useState<ActiveQueue[]>([]);
   const [copiedQueueId, setCopiedQueueId] = useState<number | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [participantStatuses, setParticipantStatuses] = useState<Record<number, { status: 'enroute' | 'at_store'; joined_at: string }>>({});
+  const [allParticipants, setAllParticipants] = useState<Record<number, Array<{ status: 'enroute' | 'at_store'; joined_at: string; user_id: string }>>>({});
 
   console.log("🚀 MyActiveQueues component mounted/updated", { userId });
+
+  // Load all participants for joined queues
+  const loadAllParticipants = async () => {
+    console.log('MyActiveQueues: Loading all participants for queues');
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at, user_id')
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('MyActiveQueues: Error loading participants:', error);
+      return;
+    }
+
+    console.log('MyActiveQueues: Found all participants:', participants);
+
+    if (participants) {
+      const participantsByQueue: Record<number, Array<{ status: 'enroute' | 'at_store'; joined_at: string; user_id: string }>> = {};
+      participants.forEach((p: any) => {
+        if (!participantsByQueue[p.queue_id]) {
+          participantsByQueue[p.queue_id] = [];
+        }
+        participantsByQueue[p.queue_id].push({
+          status: p.status,
+          joined_at: p.joined_at,
+          user_id: p.user_id
+        });
+      });
+      console.log('MyActiveQueues: Final participants by queue:', participantsByQueue);
+      setAllParticipants(participantsByQueue);
+    } else {
+      console.log('MyActiveQueues: No participants found');
+    }
+  };
+
+  // Load participant status for joined queues (current user only)
+  const loadParticipantStatuses = async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.log('MyActiveQueues: No user ID for participant status loading');
+      return;
+    }
+
+    console.log('MyActiveQueues: Loading participant status for user:', userId);
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('MyActiveQueues: Error loading participant status:', error);
+      return;
+    }
+
+    console.log('MyActiveQueues: Found participants:', participants);
+
+    if (participants) {
+      const statuses: Record<number, { status: 'enroute' | 'at_store'; joined_at: string }> = {};
+      participants.forEach((p: any) => {
+        console.log('MyActiveQueues: Setting status for queue', p.queue_id, ':', p.status);
+        statuses[p.queue_id] = {
+          status: p.status,
+          joined_at: p.joined_at
+        };
+      });
+      console.log('MyActiveQueues: Final statuses:', statuses);
+      setParticipantStatuses(statuses);
+    } else {
+      console.log('MyActiveQueues: No participants found for user');
+    }
+  };
 
   const loadMyQueues = useCallback(async () => {
     const joinedIds = readNumberList('joinedQueueIds', userId);
@@ -81,12 +157,30 @@ export default function MyActiveQueues() {
     setQueues((current) => current.filter((q) => q.id !== queue.id));
     window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
 
-    await supabase
-      .from('draft_queues')
-      .update({ current_count: Math.max((queue.current_count || 1) - 1, 0) })
-      .eq('id', queue.id);
+    // Delete participant record from database
+    console.log('MyActiveQueues: Attempting to delete participant for queue:', queue.id, 'user:', userId);
+    
+    const { data: deleteData, error: deleteError } = await supabase
+      .from('queue_participants')
+      .delete()
+      .eq('queue_id', queue.id)
+      .eq('user_id', userId)
+      .select();
+
+    console.log('MyActiveQueues: Delete result:', { deleteData, deleteError });
+
+    if (deleteError) {
+      console.error('Error deleting participant record:', deleteError);
+    } else {
+      console.log('MyActiveQueues: Successfully deleted participant record');
+    }
 
     window.refreshOtherQueues?.();
+    
+    // Remove from withdrawn list so user can rejoin
+    setTimeout(() => {
+      writeNumberList('withdrawnQueueIds', readNumberList('withdrawnQueueIds', userId).filter((id) => id !== queue.id), userId);
+    }, 1000); // Wait 1 second before removing from withdrawn list
   };
 
   const copyCompanionCode = async (queue: ActiveQueue) => {
@@ -102,15 +196,15 @@ export default function MyActiveQueues() {
       const id = await getCurrentUserId();
       setUserId(id);
     };
-
     loadUser();
     loadMyQueues();
+    loadAllParticipants();
+    loadParticipantStatuses();
+    const interval = setInterval(loadMyQueues, 2500);
+    return () => clearInterval(interval);
+  }, [loadMyQueues]);
 
-    if (typeof window !== 'undefined') {
-      window.refreshMyQueues = loadMyQueues;
-    }
-
-    // Listen for changes to joined queues
+  useEffect(() => {
     const handleJoinedQueuesChanged = () => {
       console.log("🎯 joinedQueuesChanged event received");
       loadMyQueues();
@@ -159,6 +253,45 @@ export default function MyActiveQueues() {
             <div className="text-5xl font-bold text-green-400 my-2">{q.current_count}/8</div>
             <p>Status: <span className={`capitalize font-bold ${getStatusClass(q.status)}`}>{q.status}</span></p>
             {q.label && <p className="text-yellow-400">{q.label}</p>}
+            
+            {allParticipants[q.id] && allParticipants[q.id].length > 0 && (
+              <div className="mb-3 p-3 bg-zinc-800 rounded-lg text-sm">
+                <p className="text-zinc-400 mb-1">Players in this queue ({allParticipants[q.id].length}/8):</p>
+                {allParticipants[q.id].map((participant, index) => (
+                  <div key={index} className="flex items-center justify-between py-1 border-b border-zinc-700 last:border-0">
+                    <span className="text-sm">
+                      User-{participant.user_id.slice(0, 8)}
+                    </span>
+                    <span className="text-sm font-medium">
+                      {participant.status === 'at_store' ? (
+                        <span className="text-green-400">🟢 At Store</span>
+                      ) : (
+                        <span className="text-yellow-400">🟡 Enroute</span>
+                      )}
+                    </span>
+                    <span className="text-xs text-zinc-500">
+                      {new Date(participant.joined_at).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {participantStatuses[q.id] && (
+              <div className="mb-3 p-3 bg-zinc-800 rounded-lg text-sm">
+                <p className="text-zinc-400 mb-1">Your Status:</p>
+                <p className="font-medium">
+                  {participantStatuses[q.id].status === 'at_store' ? (
+                    <span className="text-green-400">🟢 At Store</span>
+                  ) : (
+                    <span className="text-yellow-400">🟡 Enroute</span>
+                  )}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  Joined: {new Date(participantStatuses[q.id].joined_at).toLocaleTimeString()}
+                </p>
+              </div>
+            )}
             {q.status === 'firing' && q.firing_code && (
               <div className="mt-4 p-4 bg-black rounded-xl border border-orange-400">
                 <p className="text-sm text-orange-300 mb-1">Companion App Code</p>

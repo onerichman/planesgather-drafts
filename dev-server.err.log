@@ -1,0 +1,40 @@
+[browser] ⨯ unhandledRejection: Error: cannot add `postgres_changes` callbacks for realtime:store-data-1 after `subscribe()`.
+    at subscribeToChanges (app/store/[slug]/page.tsx:117:8)
+    at loadStoreData (app/store/[slug]/page.tsx:85:7)
+  115 |   const subscribeToChanges = (storeId: number) => {
+  116 |     supabase.channel(`store-data-${storeId}`)
+> 117 |       .on('postgres_changes', 
+      |        ^
+  118 |         { event: '*', schema: 'public', table: 'draft_queues', filter: `store_id=eq.${sto...
+  119 |         () => loadQueues(storeId)
+  120 |       )
+[browser] ⨯ unhandledRejection: Error: cannot add `postgres_changes` callbacks for realtime:store-data-1 after `subscribe()`.
+    at subscribeToChanges (app/store/[slug]/page.tsx:133:8)
+    at loadStoreData (app/store/[slug]/page.tsx:88:7)
+  131 |   const subscribeToChanges = (storeId: number) => {
+  132 |     supabase.channel(`store-data-${storeId}`)
+> 133 |       .on('postgres_changes', 
+      |        ^
+  134 |         { event: '*', schema: 'public', table: 'draft_queues', filter: `store_id=eq.${sto...
+  135 |         () => loadQueues(storeId)
+  136 |       )
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch
+[browser] TypeError: Failed to fetch
+    at new Promise (<anonymous>)
+[browser] TypeError: Failed to fetch

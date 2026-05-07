@@ -31,6 +31,7 @@ export default function QuickDraftFinder() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [participantStatuses, setParticipantStatuses] = useState<Record<number, { status: 'enroute' | 'at_store'; joined_at: string }>>({});
 
   // Load joined queues from localStorage per current user
   useEffect(() => {
@@ -120,6 +121,45 @@ export default function QuickDraftFinder() {
     return () => window.removeEventListener('joinQueue', handleJoinEvent);
   }, [joinedQueueIds, skipPhonePrompt, userPhoneNumber]);
 
+  // Load participant status for joined queues
+  const loadParticipantStatuses = async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.log('QuickDraftFinder: No user ID for participant status loading');
+      return;
+    }
+
+    console.log('QuickDraftFinder: Loading participant status for user:', userId);
+
+    const { data: participants, error } = await supabase
+      .from('queue_participants')
+      .select('queue_id, status, joined_at')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (error) {
+      console.error('QuickDraftFinder: Error loading participant status:', error);
+      return;
+    }
+
+    console.log('QuickDraftFinder: Found participants:', participants);
+
+    if (participants) {
+      const statuses: Record<number, { status: 'enroute' | 'at_store'; joined_at: string }> = {};
+      participants.forEach((p: any) => {
+        console.log('QuickDraftFinder: Setting status for queue', p.queue_id, ':', p.status);
+        statuses[p.queue_id] = {
+          status: p.status,
+          joined_at: p.joined_at
+        };
+      });
+      console.log('QuickDraftFinder: Final statuses:', statuses);
+      setParticipantStatuses(statuses);
+    } else {
+      console.log('QuickDraftFinder: No participants found for user');
+    }
+  };
+
   // Listen for player requests approved by store
   useEffect(() => {
     const handleQueueApproved = (e: Event) => {
@@ -135,6 +175,13 @@ export default function QuickDraftFinder() {
     window.addEventListener('queueApproved', handleQueueApproved);
     return () => window.removeEventListener('queueApproved', handleQueueApproved);
   }, [joinedQueueIds, userId]);
+
+  // Load participant status when component mounts or joined queues change
+  useEffect(() => {
+    if (joinedQueueIds.length > 0) {
+      loadParticipantStatuses();
+    }
+  }, [joinedQueueIds]);
 
   const findNearbyDrafts = async () => {
     if (!location) return;
@@ -156,9 +203,16 @@ export default function QuickDraftFinder() {
       if (!q.stores?.lat || !q.stores?.lng) return false;
       // Exclude commander pods - only show draft queues
       if (q.label && q.label.toLowerCase().includes('commander')) return false;
+      // Exclude queues user has already joined
+      if (joinedQueueIds.includes(q.id)) {
+        console.log('Excluding joined queue:', q.id, 'from nearby list');
+        return false;
+      }
       const dist = getDistance(location.lat, location.lng, q.stores.lat, q.stores.lng);
       return dist <= 100;
     });
+
+    console.log('QuickDraftFinder: Filtered queues:', filtered.map(q => ({ id: q.id, joined: joinedQueueIds.includes(q.id) })));
 
     filtered.sort((a, b) => {
       return getDistance(location.lat, location.lng, a.stores.lat, a.stores.lng)
@@ -170,40 +224,62 @@ export default function QuickDraftFinder() {
   };
 
   const joinSelectedQueue = async (queueId: number) => {
-    const { data: q } = await supabase
-      .from('draft_queues')
-      .select('current_count')
-      .eq('id', queueId)
-      .single();
-
-    const newCount = (q?.current_count || 0) + 1;
-
-    await supabase
-      .from('draft_queues')
-      .update({ current_count: newCount })
-      .eq('id', queueId);
-
-    const newJoinedList = [...joinedQueueIds, queueId];
-    setJoinedQueueIds(newJoinedList);
-    writeNumberList('joinedQueueIds', newJoinedList, userId);
-    writeNumberList(
-      'withdrawnQueueIds',
-      readNumberList('withdrawnQueueIds', userId).filter((id) => id !== queueId),
-      userId
-    );
-    window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
-
-    console.log("✅ Saved joined queues:", newJoinedList);
-
-    await findNearbyDrafts();
-
-    if (typeof window !== 'undefined') {
-      window.refreshMyQueues?.();
-      window.refreshOtherQueues?.();
+    if (!userId) {
+      alert('Please sign in as a player before joining a queue.');
+      return;
     }
 
-    setShowOptIn(false);
-    setShowSuccess(true);
+    try {
+      console.log('Attempting to join queue:', queueId, 'for user:', userId);
+
+      // Simple check - just try to add participant directly
+      const { data: participantData, error: participantError } = await supabase
+        .from('queue_participants')
+        .insert({
+          queue_id: queueId,
+          user_id: userId,
+          status: 'enroute' // Default status when joining
+        })
+        .select()
+        .single();
+
+      if (participantError) {
+        console.error('Error joining queue:', participantError);
+        alert('Error joining queue: ' + (participantError?.message || 'Unknown error'));
+        return;
+      }
+
+      console.log('Successfully joined queue:', participantData);
+
+      // Also update old current_count for backward compatibility
+      await supabase.rpc('increment_queue_count', { queue_id: queueId });
+
+      const newJoinedList = [...joinedQueueIds, queueId];
+      setJoinedQueueIds(newJoinedList);
+      writeNumberList('joinedQueueIds', newJoinedList, userId);
+      writeNumberList(
+        'withdrawnQueueIds',
+        readNumberList('withdrawnQueueIds', userId).filter((id) => id !== queueId),
+        userId
+      );
+      window.dispatchEvent(new CustomEvent('joinedQueuesChanged'));
+
+      console.log("✅ Saved joined queues:", newJoinedList);
+
+      // Immediately refresh nearby queues to remove joined queue
+      await findNearbyDrafts();
+
+      // Also trigger refresh in OtherActiveQueues component
+      window.refreshOtherQueues?.();
+
+      setSelectedQueueId(null);
+      setShowOptIn(false);
+      setShowSuccess(true);
+
+    } catch (error) {
+      console.error('Unexpected error in joinSelectedQueue:', error);
+      alert('Error joining queue. Please try again.');
+    }
   };
 
   function attemptJoin(queueId: number) {
@@ -280,6 +356,27 @@ export default function QuickDraftFinder() {
                     {q.current_count} / 8
                   </div>
                   {q.label && <p className="text-yellow-400 mb-4">{q.label}</p>}
+
+                  {(() => {
+                    console.log('QuickDraftFinder: Checking status for queue', q.id, 'in participantStatuses:', participantStatuses);
+                    const hasStatus = participantStatuses[q.id];
+                    console.log('QuickDraftFinder: Has status for queue', q.id, ':', hasStatus);
+                    return hasStatus;
+                  })() && (
+                    <div className="mb-3 p-2 bg-zinc-800 rounded-lg text-sm">
+                      <p className="text-zinc-400 mb-1">Your Status:</p>
+                      <p className="font-medium">
+                        {participantStatuses[q.id].status === 'at_store' ? (
+                          <span className="text-green-400">🟢 At Store</span>
+                        ) : (
+                          <span className="text-yellow-400">🟡 Enroute</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        Joined: {new Date(participantStatuses[q.id].joined_at).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  )}
 
                   <button
                     onClick={() => attemptJoin(q.id)}
