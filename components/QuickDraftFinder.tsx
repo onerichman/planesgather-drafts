@@ -111,7 +111,10 @@ export default function QuickDraftFinder() {
       setSelectedQueueId(queueId);
       
       // Check if user is already opted in before showing phone modal
-      if (skipPhonePrompt || Boolean(userPhoneNumber)) {
+      // Only skip if we have confirmed data (not during initial load)
+      const isOptedIn = skipPhonePrompt === true || (userPhoneNumber !== null && userPhoneNumber !== undefined);
+      
+      if (isOptedIn) {
         joinSelectedQueue(queueId);
       } else {
         setShowOptIn(true);
