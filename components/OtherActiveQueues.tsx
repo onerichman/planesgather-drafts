@@ -160,8 +160,17 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
       loadParticipantStatuses();
     }, 2500);
 
+    // Listen for queue approvals to refresh participant data immediately
+    const handleQueueApproved = () => {
+      console.log("🔄 Queue approved, refreshing participant data");
+      loadAllParticipants();
+      loadParticipantStatuses();
+    };
+    window.addEventListener('queueApproved', handleQueueApproved);
+
     return () => {
       clearInterval(interval);
+      window.removeEventListener('queueApproved', handleQueueApproved);
     };
   }, [loadQueues]);
 
