@@ -101,6 +101,28 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
   };
 
   const loadQueues = useCallback(async (): Promise<void> => {
+    if (!userId) {
+      console.log("❌ No userId available, cannot load queues");
+      setQueues([]);
+      setLoading(false);
+      return;
+    }
+
+    // Get queues where user is a participant (not withdrawn)
+    const { data: userParticipants, error: participantError } = await supabase
+      .from('queue_participants')
+      .select('queue_id')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (participantError) {
+      console.error("❌ Error fetching user participants:", participantError);
+    }
+
+    const joinedQueueIds = userParticipants?.map(p => p.queue_id) || [];
+    console.log("📊 User is participating in queues:", joinedQueueIds);
+
+    // Get all active queues
     const { data } = await supabase
       .from('draft_queues')
       .select(`
@@ -114,9 +136,14 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
       .in('status', ['open', 'firing'])
       .order('created_at', { ascending: false });
 
-    setQueues((data || []) as unknown as ActiveQueue[]);
+    const allQueues = (data || []) as unknown as ActiveQueue[];
+    
+    // Filter out queues where user is already participating
+    const filteredQueues = allQueues.filter(queue => !joinedQueueIds.includes(queue.id));
+    
+    setQueues(filteredQueues);
     setLoading(false);
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -134,20 +161,13 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     };
   }, [loadQueues]);
 
-  // Read joined queues for current user
-  let joinedQueueIds: number[] = [];
-  if (typeof window !== 'undefined') {
-    joinedQueueIds = readNumberList('joinedQueueIds', userId);
-  }
-
   if (loading) {
     return <div className="px-8 mt-12 text-zinc-400">Loading active queues...</div>;
   }
 
   const filteredQueues = queues.filter((q) => {
-    const isJoined = joinedQueueIds.includes(q.id);
     const isCommander = q.label && q.label.toLowerCase().includes('commander');
-    if (isJoined || isCommander) return false;
+    if (isCommander) return false;
 
     if (!location) return true;
 
