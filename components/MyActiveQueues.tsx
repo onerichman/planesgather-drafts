@@ -105,43 +105,64 @@ export default function MyActiveQueues() {
   };
 
   const loadMyQueues = useCallback(async () => {
-    const joinedIds = readNumberList('joinedQueueIds', userId);
-    const withdrawnIds = readNumberList('withdrawnQueueIds', userId);
-    console.log("🔍 Reading joined IDs from localStorage:", joinedIds);
-    console.log("🚫 Reading withdrawn IDs from localStorage:", withdrawnIds);
+    if (!userId) {
+      console.log("❌ No userId available, cannot load queues");
+      return;
+    }
 
-    // First, get all queues that could potentially be joined
-    const allQueuesResult = await supabase
+    console.log("🔍 Loading queues for user:", userId);
+
+    // Get queues where user is a participant (not withdrawn)
+    const { data: userParticipants, error: participantError } = await supabase
+      .from('queue_participants')
+      .select('queue_id')
+      .eq('user_id', userId)
+      .neq('status', 'withdrawn');
+
+    if (participantError) {
+      console.error("❌ Error fetching user participants:", participantError);
+      return;
+    }
+
+    const joinedQueueIds = userParticipants?.map(p => p.queue_id) || [];
+    console.log("� User is participating in queues:", joinedQueueIds);
+
+    if (joinedQueueIds.length === 0) {
+      console.log("📊 No active queues found for user");
+      setQueues([]);
+      return;
+    }
+
+    // Get the actual queue details
+    const { data: queues, error: queueError } = await supabase
       .from('draft_queues')
       .select(`
         *,
         stores!inner(name)
-      `);
+      `)
+      .in('id', joinedQueueIds);
 
-    console.log("📊 All queues query result:", allQueuesResult);
+    if (queueError) {
+      console.error("❌ Error fetching queues:", queueError);
+      return;
+    }
 
-    const allQueues = (allQueuesResult.data || []) as ActiveQueue[];
-    console.log("📊 All queues found:", allQueues.length, allQueues.map(q => ({ id: q.id, status: q.status, label: q.label })));
+    const allQueues = (queues || []) as ActiveQueue[];
+    console.log("📊 Queues found:", allQueues.length, allQueues.map(q => ({ id: q.id, status: q.status, label: q.label })));
 
-    // Filter to only joined queues
-    const data = allQueues.filter(queue => joinedIds.includes(queue.id));
-    console.log("🔄 After filtering by joined IDs:", data.length, data.map(q => ({ id: q.id, status: q.status })));
+    // Filter to only draft queues (exclude commander pods)
+    const data = allQueues.filter(queue => {
+      const isCommander = queue.label && queue.label.toLowerCase().includes('commander');
+      console.log(`🔍 Queue ${queue.id}: ${queue.label}, isCommander: ${isCommander}`);
+      return !isCommander;
+    });
+    console.log("🔄 After filtering commander queues:", data.length, data.map(q => ({ id: q.id, status: q.status })));
 
     console.log("🔄 Processing queues:", data.length);
     const uniqueQueues = new Map<number, ActiveQueue>();
     for (const queue of data) {
-      console.log(`🔍 Checking queue ${queue.id}: status=${queue.status}, label=${queue.label}`);
-      // Exclude commander pods - only show draft queues
-      if (queue.label && queue.label.toLowerCase().includes('commander')) {
-        console.log(`🚫 Skipping commander queue ${queue.id}`);
-        continue;
-      }
-      if (!withdrawnIds.includes(queue.id)) {
-        console.log(`✅ Adding queue ${queue.id} to display`);
-        uniqueQueues.set(queue.id, queue);
-      } else {
-        console.log(`🚫 Skipping withdrawn queue ${queue.id}`);
-      }
+      console.log(`✅ Adding queue ${queue.id} to display`);
+      uniqueQueues.set(queue.id, queue);
     }
 
     const finalQueues = Array.from(uniqueQueues.values());
