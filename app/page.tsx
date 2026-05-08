@@ -26,7 +26,8 @@ export default function Home() {
   useEffect(() => {
     setIsHydrated(true);
     const navigationEntries = window.performance?.getEntriesByType?.('navigation') || [];
-    const navigationType = navigationEntries[0]?.type || 'navigate';
+    const navigationEntry = navigationEntries[0];
+    const navigationType = navigationEntry && 'type' in navigationEntry ? (navigationEntry as PerformanceNavigationTiming).type : 'navigate';
 
     if (navigationType === 'reload') {
       const savedGameType = localStorage.getItem('selectedGameType');
