@@ -403,6 +403,19 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       .update({ status: 'approved', notes: approvalNotes || null })
       .eq('id', approvingRequest.id);
 
+    // Add the requesting player to the queue participants
+    if (newQueue && approvingRequest.user_id) {
+      await supabase
+        .from('queue_participants')
+        .insert({
+          queue_id: newQueue.id,
+          user_id: approvingRequest.user_id,
+          status: 'at_store',
+          joined_at: new Date().toISOString()
+        });
+      console.log("✅ Added player to queue participants:", newQueue.id, approvingRequest.user_id);
+    }
+
     alert(`✅ Queue #${nextNumber} created!\n${finalLabel}`);
 
     loadQueues(storeId);
