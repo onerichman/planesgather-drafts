@@ -405,7 +405,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
 
     // Add the requesting player to the queue participants
     if (newQueue && approvingRequest.user_id) {
-      await supabase
+      console.log("🔍 Attempting to add player to queue participants:", { queueId: newQueue.id, userId: approvingRequest.user_id });
+      const { data, error } = await supabase
         .from('queue_participants')
         .insert({
           queue_id: newQueue.id,
@@ -413,7 +414,12 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
           status: 'at_store',
           joined_at: new Date().toISOString()
         });
-      console.log("✅ Added player to queue participants:", newQueue.id, approvingRequest.user_id);
+      
+      if (error) {
+        console.error("❌ Failed to add player to queue participants:", error);
+      } else {
+        console.log("✅ Added player to queue participants:", newQueue.id, approvingRequest.user_id, data);
+      }
     }
 
     alert(`✅ Queue #${nextNumber} created!\n${finalLabel}`);
