@@ -154,10 +154,14 @@ export default function OtherActiveQueues({ onJoin }: Props): import("react/jsx-
     loadQueues();
     loadAllParticipants();
     loadParticipantStatuses();
-    const interval = setInterval(loadQueues, 2500);
+    const interval = setInterval(() => {
+      loadQueues();
+      loadAllParticipants();
+      loadParticipantStatuses();
+    }, 2500);
 
     return () => {
-      // No channel to remove
+      clearInterval(interval);
     };
   }, [loadQueues]);
 
